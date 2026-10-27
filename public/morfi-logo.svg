@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
+  <!-- Chef hat -->
+  <ellipse cx="100" cy="95" rx="38" ry="12" fill="#B9E769"/>
+  <path d="M68 95 Q62 60 80 50 Q88 46 100 48 Q112 46 120 50 Q138 60 132 95 Z" fill="white"/>
+  <circle cx="82" cy="64" r="16" fill="white"/>
+  <circle cx="100" cy="58" r="19" fill="white"/>
+  <circle cx="118" cy="64" r="16" fill="white"/>
+  <!-- Hat brim -->
+  <rect x="63" y="90" width="74" height="14" rx="7" fill="#B9E769"/>
+  <!-- Fork -->
+  <line x1="88" y1="108" x2="88" y2="148" stroke="#173D2B" stroke-width="4" stroke-linecap="round"/>
+  <line x1="84" y1="108" x2="84" y2="120" stroke="#173D2B" stroke-width="3" stroke-linecap="round"/>
+  <line x1="92" y1="108" x2="92" y2="120" stroke="#173D2B" stroke-width="3" stroke-linecap="round"/>
+  <!-- Spoon -->
+  <ellipse cx="112" cy="114" rx="6" ry="8" fill="#173D2B"/>
+  <line x1="112" y1="122" x2="112" y2="148" stroke="#173D2B" stroke-width="4" stroke-linecap="round"/>
+</svg>
