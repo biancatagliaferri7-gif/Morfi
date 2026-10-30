@@ -12,26 +12,17 @@ export default defineConfig({
       manifest: {
         name: 'MORFI',
         short_name: 'MORFI',
+        lang: 'es-AR',
         start_url: '/',
         display: 'standalone',
         background_color: '#FFFFFF',
-        theme_color: '#173D2B',
+        theme_color: '#F07821',
         icons: [
           {
-            src: '/icon-192.png',
-            sizes: '192x192',
-            type: 'image/png'
-          },
-          {
-            src: '/icon-512.png',
-            sizes: '512x512',
-            type: 'image/png'
-          },
-          {
-            src: '/icon-maskable.png',
-            sizes: '512x512',
-            type: 'image/png',
-            purpose: 'maskable'
+            src: '/morfi-icon.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
+            purpose: 'any'
           }
         ]
       }

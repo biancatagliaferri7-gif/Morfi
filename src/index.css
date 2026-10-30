@@ -1,10 +1,10 @@
 @import "tailwindcss";
 
 @theme {
-  --color-morfi-dark: #173D2B;
-  --color-morfi-medium: #1E5C3E;
-  --color-morfi-light: #E8F5E9;
-  --color-morfi-lime: #A8D44A;
-  --color-morfi-lime-hover: #8FC238;
-  --color-morfi-card: #F0F7EE;
+  --color-morfi-dark: #8B3F14;
+  --color-morfi-medium: #B84E0E;
+  --color-morfi-light: #FFF3E5;
+  --color-morfi-lime: #F6A623;
+  --color-morfi-lime-hover: #DB8215;
+  --color-morfi-card: #FFF9F2;
 }

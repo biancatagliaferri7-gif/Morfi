@@ -37,32 +37,31 @@ const IconCart = ({ className = '' }) => (
 /* ─── Tick decoration (reference has these in top-right of hero) */
 const TickDecoration = () => (
   <div className="absolute top-6 right-6 md:top-10 md:right-10 flex flex-col items-end gap-1 z-20 pointer-events-none">
-    <div className="w-6 h-1.5 bg-[#B9E769] rounded-full"/>
-    <div className="w-4 h-1.5 bg-[#B9E769] rounded-full"/>
-    <div className="w-2 h-1.5 bg-[#B9E769] rounded-full"/>
+    <div className="w-6 h-1.5 bg-[#F6A623] rounded-full"/>
+    <div className="w-4 h-1.5 bg-[#F6A623] rounded-full"/>
+    <div className="w-2 h-1.5 bg-[#F6A623] rounded-full"/>
   </div>
 );
 
-/* ─── Lime accent ticks next to MORFI title ─────────────────── */
+/* ─── Orange accent ticks next to MORFI logo ────────────────── */
 const TitleTicks = () => (
   <span className="inline-flex flex-col gap-0.5 ml-2 mb-1 align-bottom">
-    <span className="block w-5 h-1 bg-[#B9E769] rounded-full"/>
-    <span className="block w-3.5 h-1 bg-[#B9E769] rounded-full ml-1"/>
+    <span className="block w-5 h-1 bg-[#F6A623] rounded-full"/>
+    <span className="block w-3.5 h-1 bg-[#F6A623] rounded-full ml-1"/>
   </span>
 );
 
 /* ─── Hero Section ───────────────────────────────────────────── */
 const HeroSection: React.FC = () => (
   <section className="relative bg-white overflow-hidden">
-    {/* Green blob top-left */}
+    {/* Soft orange glow */}
     <div
       className="absolute -top-16 -left-16 w-72 h-72 rounded-full pointer-events-none"
-      style={{ background: 'radial-gradient(circle, rgba(185,231,105,0.35) 0%, transparent 70%)' }}
+      style={{ background: 'radial-gradient(circle, rgba(246,166,35,0.35) 0%, transparent 70%)' }}
     />
-    {/* Green blob bottom-left */}
     <div
       className="absolute -bottom-10 left-1/3 w-56 h-56 rounded-full pointer-events-none"
-      style={{ background: 'radial-gradient(circle, rgba(185,231,105,0.25) 0%, transparent 70%)' }}
+      style={{ background: 'radial-gradient(circle, rgba(246,166,35,0.25) 0%, transparent 70%)' }}
     />
 
     <div className="relative max-w-6xl mx-auto px-5 md:px-10">
@@ -70,19 +69,13 @@ const HeroSection: React.FC = () => (
 
         {/* ── Left column: text ── */}
         <div className="flex-1 py-10 md:py-14 z-10 order-2 md:order-1 text-center md:text-left">
-          {/* Big MORFI title */}
-          <div className="flex items-end justify-center md:justify-start">
-            <h1
-              className="text-6xl md:text-8xl font-black leading-none text-[#173D2B]"
-              style={{ fontFamily: 'Inter, system-ui, sans-serif' }}
-            >
-              MORFI
-            </h1>
+          <h1 className="flex items-center justify-center md:justify-start">
+            <img src="/morfi-logo-nuevo.jpeg" alt="MORFI" className="h-16 w-[225px] object-contain object-left md:h-20 md:w-[285px]" />
             <TitleTicks />
-          </div>
+          </h1>
 
           {/* Subtitle */}
-          <h2 className="text-xl md:text-2xl font-bold text-[#173D2B] leading-snug mt-3 mb-3 max-w-sm mx-auto md:mx-0">
+          <h2 className="text-xl md:text-2xl font-bold text-[#8B3F14] leading-snug mt-3 mb-3 max-w-sm mx-auto md:mx-0">
             Todo lo que necesitás para<br className="hidden md:block"/> comer, vender y ahorrar
           </h2>
 
@@ -94,7 +87,7 @@ const HeroSection: React.FC = () => (
           {/* CTA button */}
           <Link
             to="/hungry"
-            className="inline-flex items-center gap-2 px-7 py-3.5 rounded-full bg-[#B9E769] text-[#173D2B] font-bold text-base hover:brightness-95 transition-all shadow-md no-underline"
+            className="inline-flex items-center gap-2 px-7 py-3.5 rounded-full bg-[#F6A623] text-[#8B3F14] font-bold text-base hover:brightness-95 transition-all shadow-md no-underline"
           >
             Comenzar ahora
             <ArrowRight className="w-5 h-5"/>
@@ -104,28 +97,16 @@ const HeroSection: React.FC = () => (
         {/* ── Right column: delivery image ── */}
         <div className="flex-1 relative flex justify-center md:justify-end order-1 md:order-2 pt-6 md:pt-0">
           <TickDecoration/>
-          {/* The hero image – delivery person with kraft bag */}
+          {/* Featured food image */}
           <div className="relative w-full max-w-[320px] md:max-w-[460px] h-[240px] md:h-[400px] overflow-hidden rounded-2xl md:rounded-none md:overflow-visible">
             <img
-              src="https://images.unsplash.com/photo-1526367790999-0150786686a2?w=800&q=85"
-              alt="Repartidor MORFI entregando pedido"
+              src="/morfi-portada.jpeg"
+              alt="Mesa con platos frescos para compartir"
               className="w-full h-full object-cover rounded-2xl md:rounded-xl shadow-lg"
             />
-            {/* Overlay kraft bag label – decorative */}
-            <div className="absolute bottom-4 right-4 bg-amber-100 bg-opacity-90 rounded-lg px-3 py-2 shadow-md flex flex-col items-center">
-              <svg width="28" height="28" viewBox="0 0 100 100" fill="none">
-                <circle cx="38" cy="34" r="14" fill="#173D2B" opacity="0.9"/>
-                <circle cx="50" cy="28" r="17" fill="#173D2B" opacity="0.9"/>
-                <circle cx="62" cy="34" r="14" fill="#173D2B" opacity="0.9"/>
-                <rect x="29" y="44" width="42" height="10" rx="5" fill="#B9E769"/>
-                <rect x="30" y="34" width="40" height="16" fill="#173D2B" opacity="0.9"/>
-                <line x1="38" y1="56" x2="38" y2="72" stroke="white" strokeWidth="4" strokeLinecap="round"/>
-                <line x1="35" y1="56" x2="35" y2="63" stroke="white" strokeWidth="3" strokeLinecap="round"/>
-                <line x1="41" y1="56" x2="41" y2="63" stroke="white" strokeWidth="3" strokeLinecap="round"/>
-                <ellipse cx="62" cy="61" rx="5" ry="6.5" fill="white"/>
-                <line x1="62" y1="67" x2="62" y2="72" stroke="white" strokeWidth="4" strokeLinecap="round"/>
-              </svg>
-              <span className="text-[10px] font-black text-[#173D2B] tracking-wider mt-0.5">MORFI</span>
+            {/* Brand mark */}
+            <div className="absolute bottom-4 right-4 bg-white/95 rounded-xl px-3 py-2 shadow-md">
+              <img src="/morfi-icon.svg" alt="" className="h-10 w-10" />
             </div>
           </div>
         </div>
@@ -142,35 +123,38 @@ interface CardData {
   description: string;
   imgSrc: string;
   imgAlt: string;
+  imgFit?: 'cover' | 'contain';
   cta: string;
 }
 
 const CARDS: CardData[] = [
   {
     to: '/hungry',
-    icon: <IconCloche className="w-10 h-10 text-[#173D2B]"/>,
+    icon: <IconCloche className="w-10 h-10 text-[#8B3F14]"/>,
     title: 'Tengo hambre',
     description: 'Explorá negocios gastronómicos, conocé sus menús y hacé tu pedido de forma rápida y simple.',
-    imgSrc: '/pasta.jpg',
-    imgAlt: 'Plato de pasta bolognesa',
+    imgSrc: '/morfi-hambre.jpeg',
+    imgAlt: 'Comidas disponibles en Tengo hambre',
     cta: 'Explorar menús',
   },
   {
     to: '/business',
-    icon: <IconStore className="w-10 h-10 text-[#173D2B]"/>,
+    icon: <IconStore className="w-10 h-10 text-[#8B3F14]"/>,
     title: 'Mi emprendimiento',
     description: 'Administrá tu negocio gastronómico: costos, recetas, inventario, ventas y pedidos.',
-    imgSrc: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=600&q=80',
-    imgAlt: 'Laptop con dashboard de gestión de negocio',
+    imgSrc: '/morfi-emprendimiento.png',
+    imgAlt: 'Administración de un emprendimiento gastronómico',
+    imgFit: 'contain',
     cta: 'Gestionar mi negocio',
   },
   {
     to: '/savings',
-    icon: <IconCart className="w-10 h-10 text-[#173D2B]"/>,
+    icon: <IconCart className="w-10 h-10 text-[#8B3F14]"/>,
     title: 'MORFI Ahorro',
     description: 'Compará precios de productos y canastas de compra entre diferentes comercios y ahorrá en tus insumos.',
-    imgSrc: 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=600&q=80',
-    imgAlt: 'Canasta con verduras y frutas frescas',
+    imgSrc: '/morfi-ahorro%20(2).png',
+    imgAlt: 'Comparación de precios entre supermercados y proveedores',
+    imgFit: 'contain',
     cta: 'Comparar precios',
   },
 ];
@@ -183,21 +167,21 @@ const DesktopCards: React.FC = () => (
         {CARDS.map((card) => (
           <article
             key={card.to}
-            className="bg-[#F0F7EE] rounded-2xl overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-shadow"
+            className="bg-[#FFF3E5] rounded-2xl overflow-hidden flex flex-col shadow-sm hover:shadow-md transition-shadow"
           >
             {/* Icon + Title + Description */}
             <div className="p-5 pb-3">
               <div className="mb-3">{card.icon}</div>
-              <h3 className="text-lg font-bold text-[#173D2B] mb-2">{card.title}</h3>
+              <h3 className="text-lg font-bold text-[#8B3F14] mb-2">{card.title}</h3>
               <p className="text-sm text-gray-600 leading-relaxed">{card.description}</p>
             </div>
 
             {/* Image */}
-            <div className="flex-1 mx-4 mb-4 rounded-xl overflow-hidden" style={{ minHeight: '160px', maxHeight: '180px' }}>
+            <div className="flex-1 mx-4 mb-4 rounded-xl overflow-hidden bg-[#FFF3E5]" style={{ minHeight: '160px', maxHeight: '180px' }}>
               <img
                 src={card.imgSrc}
                 alt={card.imgAlt}
-                className="w-full h-full object-cover"
+                className={`w-full h-full ${card.imgFit === 'contain' ? 'object-contain' : 'object-cover'}`}
                 style={{ minHeight: '160px' }}
               />
             </div>
@@ -206,7 +190,7 @@ const DesktopCards: React.FC = () => (
             <div className="px-4 pb-5">
               <Link
                 to={card.to}
-                className="flex items-center justify-center gap-2 w-full py-3 rounded-full bg-[#173D2B] text-white font-semibold text-sm hover:bg-[#1E5C3E] transition-colors no-underline"
+                className="flex items-center justify-center gap-2 w-full py-3 rounded-full bg-[#8B3F14] text-white font-semibold text-sm hover:bg-[#B84E0E] transition-colors no-underline"
               >
                 {card.cta}
                 <ArrowRight className="w-4 h-4"/>
@@ -225,28 +209,28 @@ const MobileCards: React.FC = () => (
     {CARDS.map((card) => (
       <article
         key={card.to}
-        className="bg-[#F0F7EE] rounded-2xl overflow-hidden shadow-sm"
+        className="bg-[#FFF3E5] rounded-2xl overflow-hidden shadow-sm"
       >
         <div className="flex items-stretch">
           {/* Left: icon + text */}
           <div className="flex-1 p-4 pr-2">
             <div className="mb-2">{card.icon}</div>
-            <h3 className="text-base font-bold text-[#173D2B] mb-1">{card.title}</h3>
+            <h3 className="text-base font-bold text-[#8B3F14] mb-1">{card.title}</h3>
             <p className="text-xs text-gray-600 leading-relaxed">{card.description}</p>
           </div>
 
           {/* Right: image + arrow stacked */}
           <div className="flex flex-col items-end justify-between p-3 pl-0 gap-2">
-            <div className="w-28 h-24 rounded-xl overflow-hidden flex-shrink-0">
+            <div className="w-28 h-24 rounded-xl overflow-hidden flex-shrink-0 bg-[#FFF3E5]">
               <img
                 src={card.imgSrc}
                 alt={card.imgAlt}
-                className="w-full h-full object-cover"
+                className={`w-full h-full ${card.imgFit === 'contain' ? 'object-contain' : 'object-cover'}`}
               />
             </div>
             <Link
               to={card.to}
-              className="flex items-center justify-center w-9 h-9 rounded-full bg-[#173D2B] text-white hover:bg-[#1E5C3E] transition-colors no-underline flex-shrink-0"
+              className="flex items-center justify-center w-9 h-9 rounded-full bg-[#8B3F14] text-white hover:bg-[#B84E0E] transition-colors no-underline flex-shrink-0"
               aria-label={card.cta}
             >
               <ArrowRight className="w-4 h-4"/>
