@@ -9,3 +9,14 @@ const supabaseKey =
 
 export const supabase: SupabaseClient | null =
   supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
+
+export const publicSupabase: SupabaseClient | null =
+  supabaseUrl && supabaseKey
+    ? createClient(supabaseUrl, supabaseKey, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      })
+    : null

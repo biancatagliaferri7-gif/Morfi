@@ -1,14 +1,26 @@
 
 import { useEffect, useRef, useState } from 'react';
+import type { FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import BusinessWorkflow from './BusinessWorkflow';
 import type { BusinessSection } from './BusinessWorkflow';
 import { useAuth } from '../AuthContext';
 import { isIngredient, isRecipe } from '../business/calculations';
+import {
+  createBusiness,
+  createBusinessProduct,
+  deleteBusinessProduct,
+  listBusinessProducts,
+  listManagedBusinesses,
+  updateBusinessPublication,
+  updateBusinessProduct,
+} from '../business/businessService';
+import type { BusinessProduct, BusinessProductInput } from '../business/businessService';
+import type { ManagedBusiness } from '../business/businessService';
 import type { Ingredient, Recipe } from '../business/types';
 
 type Product = {
-  id: number;
+  id: number | string;
   name: string;
   price: number;
   available: boolean;
@@ -31,6 +43,10 @@ type Product = {
   sellerId?: string;
   sellerName?: string;
   sellerPhone?: string | null;
+  businessId?: string;
+  acceptsDelivery?: boolean;
+  paymentMethods?: ('cash' | 'transfer')[];
+  cashDiscountPercent?: number | null;
 };
 
 type IngredientUnit = 'g' | 'kg' | 'ml' | 'l' | 'unidad';
@@ -50,12 +66,6 @@ type Order = {
   total: number;
   status: 'Pendiente' | 'Aceptado' | 'Preparando' | 'Listo para la entrega' | 'Entregado' | 'Rechazado';
 };
-
-const initialProducts: Product[] = [
-  { id: 1, name: 'Milanesa con puré', price: 9500, available: true, description: 'Milanesa de carne con puré de papas.', category: 'Viandas', quantity: 12, saleMode: 'direct' },
-  { id: 2, name: 'Tarta de verduras', price: 8000, available: true, description: 'Tarta casera con verduras de estación.', category: 'Tartas', quantity: 8, saleMode: 'direct' },
-  { id: 3, name: 'Pollo al horno con papas', price: 10500, available: true, description: 'Pollo al horno con papas doradas.', category: 'Viandas', quantity: 6, saleMode: 'direct' },
-];
 
 const productTypes: { name: string; ingredients: string[] }[] = [
   { name: 'Lomitos', ingredients: ['Pan', 'Carne', 'Jamón', 'Queso', 'Huevo', 'Tomate', 'Lechuga'] },
@@ -86,7 +96,6 @@ const orderStatuses: Order['status'][] = [
 ];
 
 const defaultIngredientUnit: IngredientUnit = 'g';
-const catalogUpdatedEvent = 'morfi:catalog-updated';
 const ingredientUnits: { value: IngredientUnit; label: string }[] = [
   { value: 'g', label: 'g' },
   { value: 'kg', label: 'kg' },
@@ -103,6 +112,23 @@ function ingredientDraft(name: string): IngredientDraft {
     packageQuantity: '',
     packagePrice: '',
     recipeQuantity: '',
+  };
+}
+
+function toProduct(product: BusinessProduct): Product {
+  return {
+    id: product.id,
+    businessId: product.business_id,
+    name: product.name,
+    description: product.description,
+    price: Number(product.price),
+    image: product.image_path ?? undefined,
+    quantity: product.stock_quantity,
+    available: product.is_available,
+    acceptsDelivery: product.accepts_delivery,
+    paymentMethods: product.payment_methods,
+    cashDiscountPercent: product.cash_discount_percent,
+    category: 'Producto',
   };
 }
 
@@ -148,12 +174,10 @@ function CostSummary({ label, value }: { label: string; value: number | null }) 
 }
 
 export default function Business() {
-  const { profile } = useAuth();
-  const productsStorageKey = `morfi_business_products_${profile?.id ?? 'guest'}`;
+  const { profile, session } = useAuth();
+  const userId = session?.user.id;
   const ordersStorageKey = 'morfi_business_orders';
-  const [products, setProducts] = useState<Product[]>(() =>
-    loadData(productsStorageKey, initialProducts)
-  );
+  const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>(() => loadOrders(ordersStorageKey));
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -161,7 +185,10 @@ export default function Business() {
   const [customProductType, setCustomProductType] = useState('');
   const [saleMode, setSaleMode] = useState<'direct' | 'cost'>('direct');
   const [price, setPrice] = useState('');
-  const [quantity, setQuantity] = useState('');
+  const [isAvailable, setIsAvailable] = useState(true);
+  const [acceptsDelivery, setAcceptsDelivery] = useState(false);
+  const [paymentMethods, setPaymentMethods] = useState<('cash' | 'transfer')[]>(['cash']);
+  const [cashDiscountPercent, setCashDiscountPercent] = useState('');
   const [yieldQuantity, setYieldQuantity] = useState('');
   const [additionalCosts, setAdditionalCosts] = useState('0');
   const [ingredientCosts, setIngredientCosts] = useState<IngredientDraft[]>(
@@ -173,16 +200,142 @@ export default function Business() {
   const cameraInput = useRef<HTMLInputElement>(null);
   const [formError, setFormError] = useState('');
   const [orderStorageError, setOrderStorageError] = useState('');
+  const [managedBusinesses, setManagedBusinesses] = useState<ManagedBusiness[]>([]);
+  const [businessesLoading, setBusinessesLoading] = useState(true);
+  const [businessesError, setBusinessesError] = useState('');
+  const [businessFormError, setBusinessFormError] = useState('');
+  const [businessName, setBusinessName] = useState('');
+  const [businessDescription, setBusinessDescription] = useState('');
+  const [creatingBusiness, setCreatingBusiness] = useState(false);
+  const [businessNotice, setBusinessNotice] = useState('');
+  const [publicationNotice, setPublicationNotice] = useState('');
+  const [publicationError, setPublicationError] = useState('');
+  const [publicationBusyId, setPublicationBusyId] = useState<string | null>(null);
+  const [businessesReload, setBusinessesReload] = useState(0);
+  const [selectedBusinessId, setSelectedBusinessId] = useState('');
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsError, setProductsError] = useState('');
+  const [productsNotice, setProductsNotice] = useState('');
+  const [productsReload, setProductsReload] = useState(0);
+  const [savingProduct, setSavingProduct] = useState(false);
+  const [productActionId, setProductActionId] = useState<string | null>(null);
+  const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [tab, setTab] = useState<'productos' | 'pedidos' | BusinessSection>('productos');
   const packageFactor = (unit: IngredientUnit) => unit === 'kg' || unit === 'l' ? 1000 : 1;
+
   useEffect(() => {
-    try {
-      localStorage.setItem(productsStorageKey, JSON.stringify(products));
-      window.dispatchEvent(new Event(catalogUpdatedEvent));
-    } catch {
-      setFormError('No se pudieron guardar los productos en este navegador. Probá con imágenes más pequeñas.');
+    let active = true;
+    async function loadBusinesses() {
+      setBusinessesLoading(true);
+      setBusinessesError('');
+      try {
+        if (!userId) throw new Error('No se pudo identificar la sesión autenticada.');
+        const businesses = await listManagedBusinesses(userId);
+        if (active) {
+          setManagedBusinesses(businesses);
+          setSelectedBusinessId(current =>
+            businesses.some(business => business.id === current) ? current : businesses[0]?.id ?? ''
+          );
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'Error inesperado.';
+        if (active) setBusinessesError(`No se pudieron consultar tus emprendimientos: ${detail}`);
+      } finally {
+        if (active) setBusinessesLoading(false);
+      }
     }
-  }, [products, productsStorageKey]);
+
+    void loadBusinesses();
+    return () => {
+      active = false;
+    };
+  }, [userId, businessesReload]);
+
+  async function registerBusiness(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedName = businessName.trim();
+    const trimmedDescription = businessDescription.trim();
+    setBusinessNotice('');
+    setBusinessFormError('');
+    if (!userId) {
+      setBusinessFormError('No se pudo identificar la sesión autenticada. Volvé a ingresar e intentá nuevamente.');
+      return;
+    }
+    if (!trimmedName) {
+      setBusinessFormError('Ingresá el nombre de tu emprendimiento.');
+      return;
+    }
+    if (trimmedName.length > 120 || trimmedDescription.length > 2000) {
+      setBusinessFormError('El nombre admite hasta 120 caracteres y la descripción hasta 2000.');
+      return;
+    }
+
+    setCreatingBusiness(true);
+    try {
+      const business = await createBusiness(userId, trimmedName, trimmedDescription);
+      setManagedBusinesses(current => [business, ...current.filter(item => item.id !== business.id)]);
+      setSelectedBusinessId(business.id);
+      setBusinessName('');
+      setBusinessDescription('');
+      setBusinessNotice('Emprendimiento registrado en Supabase y asociado a tu cuenta como propietario.');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setBusinessFormError(`No se pudo registrar el emprendimiento: ${detail}`);
+    } finally {
+      setCreatingBusiness(false);
+    }
+  }
+
+  async function toggleBusinessPublication(business: ManagedBusiness) {
+    setPublicationNotice('');
+    setPublicationError('');
+    setPublicationBusyId(business.id);
+    try {
+      const updatedBusiness = await updateBusinessPublication(business.id, !business.is_published);
+      setManagedBusinesses(current => current.map(item =>
+        item.id === updatedBusiness.id ? updatedBusiness : item
+      ));
+      setPublicationNotice(
+        updatedBusiness.is_published
+          ? `${updatedBusiness.name} está publicado y puede aparecer en Tengo hambre cuando tenga productos disponibles.`
+          : `${updatedBusiness.name} está pausado y ya no aparecerá en el catálogo público.`,
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setPublicationError(`No se pudo cambiar la publicación del emprendimiento: ${detail}`);
+    } finally {
+      setPublicationBusyId(null);
+    }
+  }
+
+  useEffect(() => {
+    let active = true;
+    async function loadProducts() {
+      setProducts([]);
+      if (!selectedBusinessId) {
+        setProductsLoading(false);
+        setProductsError('');
+        return;
+      }
+
+      setProductsLoading(true);
+      setProductsError('');
+      try {
+        const data = await listBusinessProducts(selectedBusinessId);
+        if (active) setProducts(data.map(toProduct));
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'Error inesperado.';
+        if (active) setProductsError(`No se pudieron cargar los productos de este emprendimiento: ${detail}`);
+      } finally {
+        if (active) setProductsLoading(false);
+      }
+    }
+
+    void loadProducts();
+    return () => {
+      active = false;
+    };
+  }, [selectedBusinessId, productsReload]);
 
   useEffect(() => {
     try {
@@ -224,12 +377,11 @@ export default function Business() {
     ? salePrice - totalCostPerPortion
     : null;
 
-  function addProduct(event: React.FormEvent<HTMLFormElement>) {
+  async function addProduct(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const enteredPrice = price.trim() ? Number(price) : null;
     const amount = enteredPrice ?? (saleMode === 'cost' ? suggestedPrice : 0);
-    const availableQuantity = quantity.trim() ? Number(quantity) : undefined;
     const completeRecipe = ingredientCosts.map(item => ({
       ...item,
       name: item.name.trim(),
@@ -240,10 +392,15 @@ export default function Business() {
     }));
     if (
       !name.trim() ||
-      (productType === 'Otro' && !customProductType.trim()) ||
-      description.trim().length > 240 ||
+      name.trim().length > 160 ||
+      description.trim().length > 1000 ||
       !Number.isFinite(amount) || amount <= 0 ||
-      (availableQuantity !== undefined && (!Number.isInteger(availableQuantity) || availableQuantity < 0)) ||
+      paymentMethods.length === 0 ||
+      (cashDiscountPercent.trim() !== '' && (
+        !Number.isFinite(Number(cashDiscountPercent)) ||
+        Number(cashDiscountPercent) < 0 ||
+        Number(cashDiscountPercent) > 100
+      )) ||
       (saleMode === 'cost' && (
         (yieldQuantity.trim() !== '' && (!Number.isFinite(recipeYield) || recipeYield <= 0)) ||
         !Number.isFinite(indirectCost) || indirectCost < 0 ||
@@ -266,11 +423,12 @@ export default function Business() {
       setFormError('Completá el producto, el precio y los datos de cada ingrediente. Revisá que las unidades sean compatibles.');
       return;
     }
+    if (!selectedBusinessId) {
+      setFormError('Seleccioná un emprendimiento antes de guardar productos.');
+      return;
+    }
 
-    const costPerUnit = saleMode === 'cost' ? totalCostPerPortion : undefined;
-    const productId = Date.now();
-    let recipeId: string | undefined;
-    if (saleMode === 'cost') {
+    if (saleMode === 'cost' && !editingProductId) {
       try {
         const ownerId = profile?.id;
         if (!ownerId) throw new Error('No se pudo identificar la cuenta del emprendimiento.');
@@ -317,7 +475,7 @@ export default function Business() {
             unit: item.usedUnit,
           };
         });
-        recipeId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        const recipeId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
         const recipe: Recipe = {
           id: recipeId,
           name: name.trim(),
@@ -346,47 +504,56 @@ export default function Business() {
         return;
       }
     }
-    setProducts(current => [
-      ...current,
-      {
-        id: productId,
-        name: name.trim(),
-        price: amount,
-        description: description.trim(),
-        category: productType === 'Otro' ? customProductType.trim() : productType,
-        quantity: availableQuantity,
-        saleMode,
-        costPerUnit,
-        rawMaterialCostPerPortion: saleMode === 'cost' ? rawMaterialCost / calculationYield : undefined,
-        indirectCostPerPortion: saleMode === 'cost' ? indirectCost / calculationYield : undefined,
-        suggestedPrice: saleMode === 'cost' ? suggestedPrice : undefined,
-        estimatedGainPerPortion: saleMode === 'cost' ? amount - totalCostPerPortion : undefined,
-        ingredients: saleMode === 'cost' ? completeRecipe.map(item => item.name) : [],
-        image: productPhoto || undefined,
-        sellerAlias: profile?.seller_alias,
-        sellerHolder: profile?.seller_holder,
-        sellerLocation: profile?.seller_location,
-        sellerDirections: profile?.seller_directions,
-        recipeId,
-        sellerId: profile?.id,
-        sellerName: profile?.full_name || name.trim(),
-        sellerPhone: profile?.phone,
-        available: availableQuantity !== 0,
-      },
-    ]);
+    const productInput: BusinessProductInput = {
+      name: name.trim(),
+      description: description.trim(),
+      image_path: productPhoto || null,
+      price: amount,
+      is_available: isAvailable,
+      accepts_delivery: acceptsDelivery,
+      payment_methods: paymentMethods,
+      cash_discount_percent: cashDiscountPercent.trim() ? Number(cashDiscountPercent) : null,
+    };
+
+    setSavingProduct(true);
+    setProductsError('');
+    setProductsNotice('');
+    try {
+      const saved = editingProductId
+        ? await updateBusinessProduct(selectedBusinessId, editingProductId, productInput)
+        : await createBusinessProduct(selectedBusinessId, productInput);
+      const savedProduct = toProduct(saved);
+      setProducts(current => editingProductId
+        ? current.map(product => product.id === savedProduct.id ? savedProduct : product)
+        : [savedProduct, ...current]);
+      setProductsNotice(editingProductId
+        ? 'Producto actualizado en Supabase.'
+        : 'Producto registrado en Supabase.');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setProductsError(`No se pudo guardar el producto en Supabase: ${detail}`);
+      setSavingProduct(false);
+      return;
+    }
+
     setName('');
     setDescription('');
     setPrice('');
-    setQuantity('');
+    setIsAvailable(true);
+    setAcceptsDelivery(false);
+    setPaymentMethods(['cash']);
+    setCashDiscountPercent('');
     setYieldQuantity('');
     setAdditionalCosts('0');
     setIngredientCosts(productTypes.find(item => item.name === productType)?.ingredients.map(ingredientDraft) ?? []);
     setCustomIngredient('');
     setCustomProductType('');
     setProductPhoto('');
+    setEditingProductId(null);
     if (photoInput.current) photoInput.current.value = '';
     if (cameraInput.current) cameraInput.current.value = '';
     setFormError('');
+    setSavingProduct(false);
   }
 
   function loadProductPhoto(event: React.ChangeEvent<HTMLInputElement>) {
@@ -410,30 +577,56 @@ export default function Business() {
     reader.readAsDataURL(file);
   }
 
-  function updatePrice(id: number) {
-    const product = products.find(item => item.id === id);
-    if (!product) return;
+  function editProduct(product: Product) {
+    setEditingProductId(String(product.id));
+    setName(product.name);
+    setDescription(product.description ?? '');
+    setPrice(String(product.price));
+    setIsAvailable(product.available);
+    setAcceptsDelivery(product.acceptsDelivery ?? false);
+    setPaymentMethods(product.paymentMethods?.length ? product.paymentMethods : ['cash']);
+    setCashDiscountPercent(product.cashDiscountPercent == null ? '' : String(product.cashDiscountPercent));
+    setProductPhoto(product.image ?? '');
+    setSaleMode('direct');
+    setFormError('');
+    document.getElementById('product-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 
-    const answer = prompt('¿A cuánto lo querés vender?', String(product.price));
-    if (answer === null) return;
-
-    const amount = Number(answer);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      alert('Ingresá un precio válido.');
-      return;
+  async function toggleProductAvailability(product: Product) {
+    if (!selectedBusinessId) return;
+    setProductActionId(String(product.id));
+    setProductsError('');
+    setProductsNotice('');
+    try {
+      const updated = await updateBusinessProduct(selectedBusinessId, String(product.id), {
+        is_available: !product.available,
+      });
+      setProducts(current => current.map(item => item.id === updated.id ? toProduct(updated) : item));
+      setProductsNotice(updated.is_available ? 'Producto publicado.' : 'Publicación pausada.');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setProductsError(`No se pudo cambiar la disponibilidad del producto: ${detail}`);
+    } finally {
+      setProductActionId(null);
     }
+  }
 
-    setProducts(current =>
-      current.map(item =>
-        item.id === id
-          ? {
-              ...item,
-              price: amount,
-              estimatedGainPerPortion: item.costPerUnit === undefined ? undefined : amount - item.costPerUnit,
-            }
-          : item
-      )
-    );
+  async function removeProduct(product: Product) {
+    if (!selectedBusinessId || !window.confirm('¿Eliminar este producto de Supabase?')) return;
+    setProductActionId(String(product.id));
+    setProductsError('');
+    setProductsNotice('');
+    try {
+      await deleteBusinessProduct(selectedBusinessId, String(product.id));
+      setProducts(current => current.filter(item => item.id !== product.id));
+      setProductsNotice('Producto eliminado de Supabase.');
+      if (editingProductId === String(product.id)) setEditingProductId(null);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setProductsError(`No se pudo eliminar el producto: ${detail}`);
+    } finally {
+      setProductActionId(null);
+    }
   }
 
   function updateStatus(id: string | number, status: Order['status']) {
@@ -465,6 +658,121 @@ export default function Business() {
             Administrá productos, pedidos y ventas de tu negocio gastronómico.
           </p>
         </div>
+
+        <section className="mb-8 rounded-2xl border border-green-100 bg-white p-6 shadow-sm" aria-labelledby="business-account-heading">
+          <h2 id="business-account-heading" className="text-xl font-black">Mis emprendimientos</h2>
+          <p className="mt-1 text-sm text-gray-600">Estos registros se guardan en Supabase y solo se consultan los que administrás.</p>
+
+          {businessesLoading && <p className="mt-4 text-sm text-gray-600" role="status">Cargando tus emprendimientos…</p>}
+          {businessesError && (
+            <div className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-semibold text-red-800" role="alert">
+              <p>{businessesError}</p>
+              <button
+                type="button"
+                onClick={() => setBusinessesReload(current => current + 1)}
+                className="mt-2 underline"
+              >
+                Reintentar consulta
+              </button>
+            </div>
+          )}
+          {businessNotice && <p className="mt-4 rounded-xl bg-green-50 p-4 text-sm font-semibold text-green-800" role="status">{businessNotice}</p>}
+          {publicationError && <p className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-semibold text-red-800" role="alert">{publicationError}</p>}
+          {publicationNotice && <p className="mt-4 rounded-xl bg-green-50 p-4 text-sm font-semibold text-green-800" role="status">{publicationNotice}</p>}
+
+          {!businessesLoading && !businessesError && managedBusinesses.length === 0 && (
+            <p className="mt-4 text-sm text-gray-600">Todavía no tenés emprendimientos registrados en Supabase.</p>
+          )}
+          {managedBusinesses.length > 0 && (
+            <ul className="mt-4 grid gap-3">
+              {managedBusinesses.map(business => (
+                <li key={business.id} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-orange-100 p-4">
+                  <div>
+                    <h3 className="font-bold">{business.name}</h3>
+                    {business.description && <p className="mt-1 whitespace-pre-wrap text-sm text-gray-600">{business.description}</p>}
+                    <p className={`mt-2 text-sm font-bold ${business.is_published ? 'text-green-700' : 'text-gray-500'}`}>
+                      Estado: {business.is_published ? 'Publicado' : 'No publicado'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void toggleBusinessPublication(business)}
+                    disabled={businessesLoading || publicationBusyId !== null}
+                    className={`rounded-xl px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-60 ${business.is_published ? 'bg-gray-600 hover:bg-gray-700' : 'bg-[#8B3F14] hover:bg-[#B84E0E]'}`}
+                  >
+                    {publicationBusyId === business.id
+                      ? 'Actualizando…'
+                      : business.is_published ? 'Pausar negocio' : 'Publicar negocio'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <form onSubmit={registerBusiness} className="mt-5 grid gap-3 border-t border-orange-100 pt-5">
+            <h3 className="font-bold">Registrar un emprendimiento</h3>
+            {businessFormError && <p className="rounded-xl bg-red-50 p-4 text-sm font-semibold text-red-800" role="alert">{businessFormError}</p>}
+            <label className="text-sm font-semibold">
+              Nombre
+              <input
+                value={businessName}
+                onChange={event => setBusinessName(event.target.value)}
+                maxLength={120}
+                required
+                className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
+                placeholder="Nombre de tu emprendimiento"
+              />
+            </label>
+            <label className="text-sm font-semibold">
+              Descripción (opcional)
+              <textarea
+                value={businessDescription}
+                onChange={event => setBusinessDescription(event.target.value)}
+                maxLength={2000}
+                rows={3}
+                className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
+                placeholder="Contá brevemente qué ofrecés"
+              />
+            </label>
+            <div>
+              <button
+                type="submit"
+                disabled={creatingBusiness || businessesLoading}
+                className="rounded-xl bg-[#8B3F14] px-5 py-3 font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {creatingBusiness ? 'Registrando…' : 'Registrar emprendimiento'}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section className="mb-8 rounded-2xl border border-green-100 bg-white p-6 shadow-sm">
+          <label htmlFor="selected-business" className="block text-sm font-bold">
+            Emprendimiento para gestionar productos
+            <select
+              id="selected-business"
+              value={selectedBusinessId}
+              onChange={event => {
+                setSelectedBusinessId(event.target.value);
+                setEditingProductId(null);
+                setProductsNotice('');
+                setProductsError('');
+              }}
+              disabled={businessesLoading || managedBusinesses.length === 0 || productsLoading || savingProduct || productActionId !== null}
+              className="mt-2 w-full rounded-xl border border-gray-300 bg-white p-3 font-normal disabled:bg-gray-100"
+            >
+              <option value="">
+                {businessesLoading ? 'Cargando emprendimientos…' : 'Seleccioná un emprendimiento'}
+              </option>
+              {managedBusinesses.map(business => (
+                <option key={business.id} value={business.id}>{business.name}</option>
+              ))}
+            </select>
+          </label>
+          <p className="mt-2 text-xs text-gray-600">
+            El stock se consulta desde Supabase, pero la migración actual no concede permisos al cliente para modificar stock_quantity.
+          </p>
+        </section>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100">
@@ -544,16 +852,44 @@ export default function Business() {
 
         {tab === 'productos' ? (
           <div className="space-y-6">
+            {!selectedBusinessId ? (
+              <p className="rounded-xl bg-amber-50 p-4 text-sm font-semibold text-amber-900" role="status">
+                Elegí uno de tus emprendimientos para cargar y administrar sus productos.
+              </p>
+            ) : null}
             <form
-              onSubmit={addProduct}
+              id="product-form"
+              onSubmit={event => void addProduct(event)}
               className="bg-white rounded-2xl p-6 shadow-sm border border-green-100"
             >
               <h2 className="text-xl font-black mb-2">¿Qué vas a vender?</h2>
-              <p className="mb-5 text-sm text-gray-600">Elegí una categoría, completá los datos y publicá tu producto en el catálogo de este panel.</p>
+              <p className="mb-5 text-sm text-gray-600">Completá los datos del producto y guardalo en el emprendimiento seleccionado.</p>
+              {editingProductId && (
+                <p className="mb-4 flex flex-wrap items-center gap-3 rounded-xl bg-orange-50 p-3 text-sm font-semibold">
+                  Editando producto
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingProductId(null);
+                      setName('');
+                      setDescription('');
+                      setPrice('');
+                      setProductPhoto('');
+                      setIsAvailable(true);
+                      setAcceptsDelivery(false);
+                      setPaymentMethods(['cash']);
+                      setCashDiscountPercent('');
+                    }}
+                    className="underline"
+                  >
+                    Cancelar edición
+                  </button>
+                </p>
+              )}
 
-              <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+              {!editingProductId && <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                 <label className="text-sm font-semibold">
-                  Tipo de producto
+                  Plantilla de ingredientes
                   <select
                     value={productType}
                     onChange={event => {
@@ -593,12 +929,18 @@ export default function Business() {
                     </label>
                   </div>
                 </fieldset>
-              </div>
+              </div>}
+              {!editingProductId && (
+                <p className="mb-4 text-xs text-gray-500">
+                  La tabla actual de productos no tiene columna de categoría; esta plantilla solo propone ingredientes para el cálculo local de costos.
+                </p>
+              )}
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <input
                   value={name}
                   onChange={event => setName(event.target.value)}
+                  maxLength={160}
                   aria-label="Nombre del producto"
                   placeholder="Nombre del producto (ej.: empanadas de carne)"
                   className="border border-gray-300 rounded-xl p-3"
@@ -610,7 +952,7 @@ export default function Business() {
                   onChange={event => setDescription(event.target.value)}
                   aria-label="Descripción breve"
                   placeholder="Descripción breve de tu producto"
-                  maxLength={240}
+                  maxLength={1000}
                   className="border border-gray-300 rounded-xl p-3"
                 />
 
@@ -636,16 +978,40 @@ export default function Business() {
                   </button>
                 )}
 
+                <label className="flex items-center gap-2 rounded-xl border border-orange-100 p-3 text-sm font-semibold">
+                  <input type="checkbox" checked={isAvailable} onChange={event => setIsAvailable(event.target.checked)} />
+                  Disponible para publicar
+                </label>
+                <label className="flex items-center gap-2 rounded-xl border border-orange-100 p-3 text-sm font-semibold">
+                  <input type="checkbox" checked={acceptsDelivery} onChange={event => setAcceptsDelivery(event.target.checked)} />
+                  Acepta delivery
+                </label>
+                <fieldset className="rounded-xl border border-orange-100 p-3">
+                  <legend className="px-1 text-sm font-semibold">Medios de pago</legend>
+                  {(['cash', 'transfer'] as const).map(method => (
+                    <label key={method} className="mr-4 inline-flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={paymentMethods.includes(method)}
+                        onChange={event => setPaymentMethods(current => event.target.checked
+                          ? [...current, method]
+                          : current.filter(value => value !== method))}
+                      />
+                      {method === 'cash' ? 'Efectivo' : 'Transferencia'}
+                    </label>
+                  ))}
+                </fieldset>
                 <label className="text-sm font-semibold">
-                  Cantidad disponible (opcional)
+                  Descuento por efectivo (opcional, %)
                   <input
                     type="number"
                     min="0"
-                    step="1"
-                    value={quantity}
-                    onChange={event => setQuantity(event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-gray-300 p-3 text-base font-normal"
-                    placeholder="Dejalo vacío si no querés llevar el conteo"
+                    max="100"
+                    step="0.01"
+                    value={cashDiscountPercent}
+                    onChange={event => setCashDiscountPercent(event.target.value)}
+                    className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
+                    placeholder="0 a 100"
                   />
                 </label>
               </div>
@@ -794,15 +1160,26 @@ export default function Business() {
               <div className="mt-4">
                 <button
                   type="submit"
-                  className="bg-[#F6A623] text-[#8B3F14] font-black rounded-xl p-3"
+                  disabled={!selectedBusinessId || savingProduct || businessesLoading}
+                  className="bg-[#F6A623] text-[#8B3F14] font-black rounded-xl p-3 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  + Guardar producto
+                  {savingProduct ? 'Guardando…' : editingProductId ? 'Guardar cambios' : '+ Guardar producto'}
                 </button>
               </div>
             </form>
 
             <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100">
               <h2 className="text-xl font-black mb-5">Catálogo del negocio</h2>
+              {productsLoading && <p className="mb-4 text-sm text-gray-600" role="status">Cargando productos desde Supabase…</p>}
+              {productsError && (
+                <div className="mb-4 rounded-xl bg-red-50 p-4 text-sm font-semibold text-red-800" role="alert">
+                  <p>{productsError}</p>
+                  <button type="button" onClick={() => setProductsReload(current => current + 1)} className="mt-2 underline">
+                    Reintentar carga
+                  </button>
+                </div>
+              )}
+              {productsNotice && <p className="mb-4 rounded-xl bg-green-50 p-4 text-sm font-semibold text-green-800" role="status">{productsNotice}</p>}
 
               <div className="space-y-3">
                 {products.map(product => (
@@ -814,7 +1191,12 @@ export default function Business() {
                       {product.image && <img src={product.image} alt={product.name} className="mb-3 h-32 w-48 rounded-lg object-cover" />}
                       <p className="font-bold">{product.name}</p>
                       {product.description && <p className="text-sm text-gray-600">{product.description}</p>}
-                      <p className="text-sm text-gray-500">{product.category ?? 'Producto'}{product.quantity !== undefined ? ` · Cantidad disponible: ${product.quantity}` : ''}</p>
+                      <p className="text-sm text-gray-500">{product.category ?? 'Producto'}{product.quantity !== undefined ? ` · Stock registrado: ${product.quantity}` : ''}</p>
+                      <p className="text-sm text-gray-500">
+                        {product.acceptsDelivery ? 'Acepta delivery' : 'Sin delivery'} ·
+                        {' '}{(product.paymentMethods ?? []).map(method => method === 'cash' ? 'Efectivo' : 'Transferencia').join(', ')}
+                        {product.cashDiscountPercent != null ? ` · ${product.cashDiscountPercent}% de descuento en efectivo` : ''}
+                      </p>
                       <p className="text-gray-600">{money(product.price)}</p>
                       {product.sellerAlias && <p className="mt-2 text-sm"><strong>Alias para transferir:</strong> {product.sellerAlias}{product.sellerHolder ? ` · ${product.sellerHolder}` : ''}</p>}
                       {product.sellerLocation && <p className="mt-1 text-sm text-gray-600"><strong>Local:</strong> {product.sellerLocation}{product.sellerDirections ? ` · ${product.sellerDirections}` : ''}</p>}
@@ -838,37 +1220,26 @@ export default function Business() {
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={() => updatePrice(product.id)}
+                        onClick={() => editProduct(product)}
+                        disabled={productsLoading || productActionId !== null}
                         className="px-4 py-2 border rounded-lg font-semibold"
                       >
-                        Editar precio
+                        Editar producto
                       </button>
 
                       <button
                         type="button"
-                        onClick={() =>
-                          setProducts(current =>
-                            current.map(item =>
-                              item.id === product.id
-                                ? { ...item, available: !item.available }
-                                : item
-                            )
-                          )
-                        }
+                        onClick={() => void toggleProductAvailability(product)}
+                        disabled={productsLoading || productActionId === String(product.id)}
                         className="px-4 py-2 bg-[#FFF3E5] rounded-lg font-semibold"
                       >
-                        {product.available ? 'Pausar publicación' : 'Publicar'}
+                        {productActionId === String(product.id) ? 'Guardando…' : product.available ? 'Pausar publicación' : 'Publicar'}
                       </button>
 
                       <button
                         type="button"
-                        onClick={() => {
-                          if (confirm('¿Eliminar este producto?')) {
-                            setProducts(current =>
-                              current.filter(item => item.id !== product.id)
-                            );
-                          }
-                        }}
+                        onClick={() => void removeProduct(product)}
+                        disabled={productsLoading || productActionId === String(product.id)}
                         className="px-4 py-2 text-red-700 border border-red-200 rounded-lg font-semibold"
                       >
                         Eliminar
@@ -877,7 +1248,7 @@ export default function Business() {
                   </div>
                 ))}
 
-                {products.length === 0 && (
+                {!productsLoading && selectedBusinessId && products.length === 0 && (
                   <p className="text-gray-500">Todavía no hay productos.</p>
                 )}
               </div>
