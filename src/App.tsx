@@ -1,9 +1,11 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
 import Home from './pages/Home';
 import Hungry from './pages/Hungry';
 import Business from './pages/Business';
 import Savings from './pages/Savings';
+import Auth from './pages/Auth';
+import { AuthProvider, useAuth } from './AuthContext';
 
 /* ─── SVG Icons ──────────────────────────────────────────────── */
 const IconHome = ({ className = '' }) => (
@@ -54,30 +56,24 @@ const IconMenu = ({ className = '' }) => (
   </svg>
 );
 
-/* ─── MORFI Logo SVG (inline, reusable) ─────────────────────── */
+/* ─── MORFI logo ─────────────────────────────────────────────── */
 export const MorfiLogoSVG: React.FC<{ size?: number }> = ({ size = 44 }) => (
-  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-    {/* Chef hat dome */}
-    <circle cx="38" cy="34" r="14" fill="white"/>
-    <circle cx="50" cy="28" r="17" fill="white"/>
-    <circle cx="62" cy="34" r="14" fill="white"/>
-    {/* Hat brim */}
-    <rect x="29" y="44" width="42" height="10" rx="5" fill="#B9E769"/>
-    {/* Hat body fill (between circles and brim) */}
-    <rect x="30" y="34" width="40" height="16" fill="white"/>
-    {/* Fork left */}
-    <line x1="38" y1="56" x2="38" y2="76" stroke="#173D2B" strokeWidth="3.5" strokeLinecap="round"/>
-    <line x1="35" y1="56" x2="35" y2="63" stroke="#173D2B" strokeWidth="2.5" strokeLinecap="round"/>
-    <line x1="41" y1="56" x2="41" y2="63" stroke="#173D2B" strokeWidth="2.5" strokeLinecap="round"/>
-    {/* Spoon right */}
-    <ellipse cx="62" cy="61" rx="5" ry="6.5" fill="#173D2B"/>
-    <line x1="62" y1="67" x2="62" y2="76" stroke="#173D2B" strokeWidth="3.5" strokeLinecap="round"/>
-  </svg>
+  <img
+    src="/morfi-logo-nuevo.jpeg"
+    alt="MORFI"
+    width={size * 3.5}
+    height={size}
+    className="shrink-0 object-contain"
+  />
 );
 
 /* ─── Desktop Header ─────────────────────────────────────────── */
 const DesktopHeader: React.FC = () => {
   const location = useLocation();
+  const { session, profile, signOut } = useAuth();
+  const closeSession = () => {
+    void signOut().catch(() => window.alert('No se pudo cerrar la sesión. Intentá nuevamente.'));
+  };
 
   const navLinks = [
     { to: '/', label: 'Inicio', icon: <IconHome className="w-5 h-5 mx-auto mb-0.5"/> },
@@ -87,13 +83,10 @@ const DesktopHeader: React.FC = () => {
   ];
 
   return (
-    <header className="hidden md:flex items-center px-6 py-2 bg-[#173D2B] sticky top-0 z-50 shadow-lg gap-8">
+    <header className="hidden md:flex items-center px-6 py-2 bg-white sticky top-0 z-50 shadow-sm border-b border-[#F2DDCA] gap-8">
       {/* Brand */}
       <Link to="/" className="flex items-center gap-2 no-underline flex-shrink-0">
         <MorfiLogoSVG size={42} />
-        <span className="text-white text-2xl font-black tracking-widest" style={{ fontFamily: 'Inter, system-ui, sans-serif' }}>
-          MORFI
-        </span>
       </Link>
 
       {/* Nav links with icons above */}
@@ -106,8 +99,8 @@ const DesktopHeader: React.FC = () => {
               to={to}
               className={`flex flex-col items-center no-underline transition-colors text-xs font-semibold pb-1 border-b-2 ${
                 active
-                  ? 'text-[#B9E769] border-[#B9E769]'
-                  : 'text-white border-transparent hover:text-[#B9E769]'
+                  ? 'text-[#C25B19] border-[#F07821]'
+                  : 'text-[#693416] border-transparent hover:text-[#C25B19]'
               }`}
             >
               {icon}
@@ -119,39 +112,42 @@ const DesktopHeader: React.FC = () => {
 
       {/* Auth */}
       <div className="flex items-center gap-3 flex-shrink-0">
-        <Link
-          to="/login"
-          className="flex items-center gap-1.5 px-5 py-2 rounded-full border border-white text-white text-sm font-semibold hover:bg-white hover:text-[#173D2B] transition-colors no-underline"
-        >
-          <IconUser className="w-4 h-4"/>
-          Ingresar
-        </Link>
-        <Link
-          to="/register"
-          className="px-5 py-2 rounded-full bg-[#B9E769] text-[#173D2B] text-sm font-bold hover:brightness-95 transition-all no-underline"
-        >
-          Registrarse
-        </Link>
+        {session ? (
+          <>
+            <span className="text-sm font-semibold">{profile?.full_name || 'Cuenta verificada'}</span>
+            <button onClick={closeSession} className="rounded-full border border-[#E8C9AA] px-4 py-2 text-sm font-semibold">Salir</button>
+          </>
+        ) : (
+          <>
+            <Link to="/login" className="flex items-center gap-1.5 px-5 py-2 rounded-full border border-[#E8C9AA] text-[#8B3F14] text-sm font-semibold hover:bg-[#FFF3E5] transition-colors no-underline">
+              <IconUser className="w-4 h-4"/> Ingresar
+            </Link>
+            <Link to="/register" className="px-5 py-2 rounded-full bg-[#F07821] text-white text-sm font-bold hover:bg-[#C25B19] transition-all no-underline">Registrarse</Link>
+          </>
+        )}
       </div>
     </header>
   );
 };
 
 /* ─── Mobile Header ──────────────────────────────────────────── */
-const MobileHeader: React.FC = () => (
-  <header className="flex md:hidden items-center justify-between px-4 py-2.5 bg-[#173D2B] sticky top-0 z-50">
-    <button className="text-white p-1" aria-label="Menú">
+const MobileHeader: React.FC = () => {
+  const { session, signOut } = useAuth();
+  const closeSession = () => {
+    void signOut().catch(() => window.alert('No se pudo cerrar la sesión. Intentá nuevamente.'));
+  };
+  return <header className="flex md:hidden items-center justify-between px-4 py-2.5 bg-white sticky top-0 z-50 border-b border-[#F2DDCA]">
+    <button className="text-[#8B3F14] p-1" aria-label="Menú">
       <IconMenu className="w-6 h-6"/>
     </button>
     <Link to="/" className="flex items-center gap-2 no-underline">
       <MorfiLogoSVG size={34} />
-      <span className="text-white text-xl font-black tracking-widest">MORFI</span>
     </Link>
-    <button className="text-white p-1" aria-label="Perfil">
-      <IconUser className="w-6 h-6"/>
-    </button>
-  </header>
-);
+    {session
+      ? <button onClick={closeSession} className="text-xs font-semibold text-[#8B3F14]">Salir</button>
+      : <Link to="/login" className="text-[#8B3F14] p-1" aria-label="Ingresar"><IconUser className="w-6 h-6"/></Link>}
+  </header>;
+};
 
 /* ─── Mobile Bottom Nav ──────────────────────────────────────── */
 const MobileBottomNav: React.FC = () => {
@@ -165,7 +161,7 @@ const MobileBottomNav: React.FC = () => {
   ];
 
   return (
-    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#173D2B] border-t border-[#0F2A1D] flex">
+    <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-[#F2DDCA] flex shadow-[0_-4px_16px_rgba(74,38,12,0.08)]">
       {tabs.map(({ to, label, icon }) => {
         const active = location.pathname === to;
         return (
@@ -173,7 +169,7 @@ const MobileBottomNav: React.FC = () => {
             key={to}
             to={to}
             className={`flex-1 flex flex-col items-center justify-center py-2 gap-0.5 no-underline transition-colors ${
-              active ? 'text-[#B9E769]' : 'text-[#7BAB8B] hover:text-white'
+              active ? 'text-[#C25B19]' : 'text-[#8B3F14] hover:text-[#C25B19]'
             }`}
           >
             {icon('w-5 h-5')}
@@ -186,23 +182,36 @@ const MobileBottomNav: React.FC = () => {
 };
 
 /* ─── App ────────────────────────────────────────────────────── */
+const PrivateBusiness: React.FC = () => {
+  const { loading, session, profile } = useAuth();
+  if (loading) return <p className="p-8 text-center text-[#8B3F14]">Verificando tu sesión…</p>;
+  if (!session) return <Navigate to="/login?next=%2Fbusiness" replace />;
+  if (!profile?.enabled_panels?.includes('emprendimiento')) {
+    return <p role="alert" className="p-8 text-center text-[#8B3F14]">Tu cuenta no tiene habilitado el panel Mi emprendimiento. Registrate con ese panel o contactá al equipo de MORFI.</p>;
+  }
+  return <Business key={profile.id} />;
+};
+
 const App: React.FC = () => (
   <BrowserRouter>
-    <div className="flex flex-col min-h-screen bg-white">
-      <MobileHeader />
-      <DesktopHeader />
-      <main className="flex-1 pb-16 md:pb-0">
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/hungry" element={<Hungry />} />
-          <Route path="/business" element={<Business />} />
-          <Route path="/savings" element={<Savings />} />
-          <Route path="/login" element={<div className="p-8 text-center text-[#173D2B] font-semibold">Página de ingreso (demo)</div>} />
-          <Route path="/register" element={<div className="p-8 text-center text-[#173D2B] font-semibold">Página de registro (demo)</div>} />
-        </Routes>
-      </main>
-      <MobileBottomNav />
-    </div>
+    <AuthProvider>
+      <div className="flex flex-col min-h-screen bg-white">
+        <MobileHeader />
+        <DesktopHeader />
+        <main className="flex-1 pb-16 md:pb-0">
+          <Routes>
+            <Route path="/" element={<Home />} />
+            <Route path="/hungry" element={<Hungry />} />
+            <Route path="/business" element={<PrivateBusiness />} />
+            <Route path="/savings" element={<Savings />} />
+            <Route path="/login" element={<Auth initialMode="login" />} />
+            <Route path="/register" element={<Auth initialMode="register" />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </main>
+        <MobileBottomNav />
+      </div>
+    </AuthProvider>
   </BrowserRouter>
 );
 

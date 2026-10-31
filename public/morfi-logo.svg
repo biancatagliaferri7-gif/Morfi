@@ -1,17 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none">
-  <!-- Chef hat -->
-  <ellipse cx="100" cy="95" rx="38" ry="12" fill="#B9E769"/>
-  <path d="M68 95 Q62 60 80 50 Q88 46 100 48 Q112 46 120 50 Q138 60 132 95 Z" fill="white"/>
-  <circle cx="82" cy="64" r="16" fill="white"/>
-  <circle cx="100" cy="58" r="19" fill="white"/>
-  <circle cx="118" cy="64" r="16" fill="white"/>
-  <!-- Hat brim -->
-  <rect x="63" y="90" width="74" height="14" rx="7" fill="#B9E769"/>
-  <!-- Fork -->
-  <line x1="88" y1="108" x2="88" y2="148" stroke="#173D2B" stroke-width="4" stroke-linecap="round"/>
-  <line x1="84" y1="108" x2="84" y2="120" stroke="#173D2B" stroke-width="3" stroke-linecap="round"/>
-  <line x1="92" y1="108" x2="92" y2="120" stroke="#173D2B" stroke-width="3" stroke-linecap="round"/>
-  <!-- Spoon -->
-  <ellipse cx="112" cy="114" rx="6" ry="8" fill="#173D2B"/>
-  <line x1="112" y1="122" x2="112" y2="148" stroke="#173D2B" stroke-width="4" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 390 112" fill="none">
+  <rect x="8" y="8" width="96" height="96" rx="30" fill="#F07821"/>
+  <path d="M34 59c-8-4-10-15-4-22 4-5 10-7 16-6 2-10 10-17 20-17s18 7 20 17c10-2 20 6 20 17 0 5-3 10-8 13v6H36v-8z" fill="#FFF9F2"/>
+  <path d="M35 68h62v8c0 4-3 7-7 7H42c-4 0-7-3-7-7v-8z" fill="#FFC55C"/>
+  <path d="M51 85v10m-5-26v8m5-8v8m5-8v8" stroke="#FFF9F2" stroke-width="4" stroke-linecap="round"/>
+  <path d="M75 85v10m0-26v9" stroke="#FFF9F2" stroke-width="4" stroke-linecap="round"/>
+  <ellipse cx="75" cy="72" rx="4" ry="5" fill="#FFF9F2"/>
+  <text x="122" y="73" fill="#8B3F14" font-family="Inter, Arial, sans-serif" font-size="54" font-weight="900" letter-spacing="2">MORFI</text>
+  <path d="M124 87h182" stroke="#F07821" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="318" cy="87" r="4" fill="#FFC55C"/>
+  <circle cx="332" cy="87" r="4" fill="#F07821"/>
+  <circle cx="346" cy="87" r="4" fill="#FFC55C"/>
 </svg>
