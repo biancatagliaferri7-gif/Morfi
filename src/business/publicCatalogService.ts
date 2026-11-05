@@ -83,12 +83,15 @@ export async function listPublishedBusinessCatalog(): Promise<PublicBusinessCata
         .in('product_id', products.map(product => product.id))
       : Promise.resolve(null),
   ]);
-  if (businessReviewsResult.error) throw businessReviewsResult.error;
+  if (businessReviewsResult.error && businessReviewsResult.error.code !== 'PGRST205') {
+    throw businessReviewsResult.error;
+  }
   if (productReviewsResult?.error && productReviewsResult.error.code !== 'PGRST205') {
     throw productReviewsResult.error;
   }
+  const businessReviewRows = businessReviewsResult.error ? [] : businessReviewsResult.data;
   const productReviewRows = productReviewsResult?.error ? [] : productReviewsResult?.data ?? [];
-  const businessReviews = new Map(businessReviewsResult.data.map(review => [
+  const businessReviews = new Map(businessReviewRows.map(review => [
     review.business_id,
     {
       average_rating: Number(review.average_rating),
