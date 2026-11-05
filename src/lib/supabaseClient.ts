@@ -8,7 +8,15 @@ const supabaseKey =
   import.meta.env.VITE_SUPABASE_ANON_KEY
 
 export const supabase: SupabaseClient | null =
-  supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
+  supabaseUrl && supabaseKey
+    ? createClient(supabaseUrl, supabaseKey, {
+        auth: {
+          autoRefreshToken: true,
+          persistSession: true,
+          detectSessionInUrl: true,
+        },
+      })
+    : null
 
 export const publicSupabase: SupabaseClient | null =
   supabaseUrl && supabaseKey
