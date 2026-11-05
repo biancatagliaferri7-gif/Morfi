@@ -81,10 +81,13 @@ export async function listPublishedBusinessCatalog(): Promise<PublicBusinessCata
       ? client.from('morfi_product_review_summary')
         .select('product_id, average_rating, review_count')
         .in('product_id', products.map(product => product.id))
-      : Promise.resolve({ data: [], error: null }),
+      : Promise.resolve(null),
   ]);
   if (businessReviewsResult.error) throw businessReviewsResult.error;
-  if (productReviewsResult.error) throw productReviewsResult.error;
+  if (productReviewsResult?.error && productReviewsResult.error.code !== 'PGRST205') {
+    throw productReviewsResult.error;
+  }
+  const productReviewRows = productReviewsResult?.error ? [] : productReviewsResult?.data ?? [];
   const businessReviews = new Map(businessReviewsResult.data.map(review => [
     review.business_id,
     {
@@ -92,7 +95,7 @@ export async function listPublishedBusinessCatalog(): Promise<PublicBusinessCata
       review_count: review.review_count,
     },
   ]));
-  const productReviews = new Map(productReviewsResult.data.map(review => [
+  const productReviews = new Map(productReviewRows.map(review => [
     review.product_id,
     {
       average_rating: Number(review.average_rating),
