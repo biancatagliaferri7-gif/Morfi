@@ -82,6 +82,7 @@ function mapPublicCatalog(catalog: PublicBusinessCatalog[]): Shop[] {
       price: Number(product.price),
       acceptsDelivery: product.accepts_delivery,
       paymentMethods: product.payment_methods,
+      cashDiscountPercent: product.cash_discount_percent,
       averageRating: product.average_rating,
       reviewCount: product.review_count,
       image: product.image_path || '/morfi-emprendimiento.png',
@@ -192,7 +193,9 @@ export default function Hungry() {
   const [deliveryReferences, setDeliveryReferences] = useState(pendingDraft?.references ?? '');
   const [productNotes, setProductNotes] = useState<Record<string, string>>(pendingDraft?.productNotes ?? {});
   const [orderNotes, setOrderNotes] = useState(pendingDraft?.orderNotes ?? '');
-  const method = 'transfer' as const;
+  const [method, setMethod] = useState<'cash' | 'transfer'>(
+    pendingDraft?.method === 'cash' ? 'cash' : 'transfer',
+  );
   const [customerPhoneInput, setCustomerPhoneInput] = useState('');
   const [customerOrders, setCustomerOrders] = useState<MealOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
@@ -327,15 +330,27 @@ export default function Hungry() {
     : null;
   const lines = selected?.dishes.filter(d => (cart[d.id] || 0) > 0) || [];
   const subtotal = lines.reduce((sum, d) => sum + d.price * (cart[d.id] || 0), 0);
+  const discountTotal = method === 'cash'
+    ? lines.reduce((sum, dish) => sum +
+      dish.price * (cart[dish.id] || 0) * (dish.cashDiscountPercent ?? 0) / 100, 0)
+    : 0;
+  const discountedSubtotal = subtotal - discountTotal;
   const supportsPickup = selected?.acceptsPickup ?? false;
   const supportsDelivery = selected?.acceptsDelivery === true &&
     (selected.kind === 'supplier' || (lines.length > 0 && lines.every(d => d.acceptsDelivery)));
   const transferAvailable = selected?.kind === 'business' &&
+    lines.length > 0 &&
     lines.every(dish => dish.paymentMethods?.includes('transfer') ?? false);
-  const transferDetailsComplete = selected?.kind !== 'business' || Boolean(
-    selected.alias?.trim(),
-  );
-  const transferDetailsMissing = selected?.kind === 'business' && !transferDetailsComplete;
+  const cashAvailable = selected?.kind === 'business' &&
+    lines.length > 0 &&
+    lines.every(dish => dish.paymentMethods?.includes('cash') ?? false);
+  const selectedPaymentAvailable = method === 'transfer' ? transferAvailable : cashAvailable;
+  const transferDetailsComplete = method !== 'transfer' ||
+    selected?.kind !== 'business' ||
+    Boolean(selected.alias?.trim());
+  const transferDetailsMissing = method === 'transfer' &&
+    selected?.kind === 'business' &&
+    !transferDetailsComplete;
   const businessWhatsappAvailable = selected?.kind === 'business' &&
     Boolean(selected.phone?.trim() && whatsappUrl(selected.phone, '') !== null);
   const deliveryFee = selected?.kind === 'business' && delivery === 'delivery' && subtotal > 0
@@ -345,10 +360,10 @@ export default function Hungry() {
         ? null
         : selected.deliveryFee
     : 0;
-  const total = deliveryFee === null ? null : subtotal + deliveryFee;
+  const total = deliveryFee === null ? null : discountedSubtotal + deliveryFee;
   const canPlaceOrder = subtotal > 0 &&
     (delivery === 'pickup' ? supportsPickup : supportsDelivery && address.trim().length >= 5) &&
-    transferAvailable &&
+    selectedPaymentAvailable &&
     !transferDetailsMissing &&
     (delivery !== 'delivery' || deliveryFee !== null || isOrderCheckoutV2Enabled) &&
     businessWhatsappAvailable;
@@ -365,6 +380,13 @@ export default function Hungry() {
       !orderNotes.trim() &&
       !deliveryReferences.trim()
     ));
+  useEffect(() => {
+    if (method === 'transfer' && !transferAvailable && cashAvailable) {
+      setMethod('cash');
+    } else if (method === 'cash' && !cashAvailable && transferAvailable) {
+      setMethod('transfer');
+    }
+  }, [method, transferAvailable, cashAvailable]);
   useEffect(() => {
     if (delivery === 'delivery' && !supportsDelivery) {
       if (supportsPickup) setDelivery('pickup');
@@ -389,6 +411,12 @@ export default function Hungry() {
       return remaining;
     });
     setCart(prev => ({ ...prev, [id]: Math.max(0, (prev[id] || 0) + change) }));
+  };
+  const choosePaymentMethod = (nextMethod: 'cash' | 'transfer') => {
+    if (method === nextMethod) return;
+    setMethod(nextMethod);
+    setOrderRequestKey(null);
+    setConfirmedOrder(null);
   };
   const choose = (id: string, kind: 'business' | 'supplier') => {
     if (selectedId === id && selectedKind === kind) {
@@ -489,6 +517,8 @@ export default function Hungry() {
         setNotice('El teléfono ingresado se guardará cuando se active el checkout actualizado.');
       } else if (!businessWhatsappAvailable) {
         setNotice('Este emprendimiento no tiene un WhatsApp público válido para recibir pedidos.');
+      } else if (!selectedPaymentAvailable) {
+        setNotice('El medio de pago elegido no está disponible para todos los productos del carrito.');
       } else if (!transferDetailsComplete) {
         setNotice('No se puede confirmar: falta el alias de transferencia del emprendimiento.');
       }
@@ -535,38 +565,58 @@ export default function Hungry() {
         `${item.quantity}, ${item.product_name}: ${money(item.line_total)}`,
       ).join('\n');
       const transferAlias = persistedOrder.transfer_alias?.trim();
-      if (!transferAlias) {
+      if (method === 'transfer' && !transferAlias) {
         throw new Error('El pedido se registró, pero falta el alias público del emprendimiento.');
       }
       const orderMessage = [
         '🍔 NUEVO PEDIDO DESDE MORFI',
         '',
+        `🏪 Emprendimiento: ${selected.name}`,
+        `🔢 Número de pedido: #${orderLabel}`,
         `👤 Cliente: ${persistedOrder.customer_name}`,
         `📱 Teléfono: ${persistedOrder.customer_phone ?? customerPhone}`,
         '',
         '🛒 PRODUCTOS',
         orderDetails,
+        ...persistedOrder.items
+          .filter(item => item.customer_notes?.trim())
+          .map(item => `  Observación (${item.product_name}): ${item.customer_notes?.trim()}`),
+        ...(persistedOrder.customer_notes?.trim()
+          ? ['', `📝 Observaciones generales: ${persistedOrder.customer_notes.trim()}`]
+          : []),
         '',
         `🚚 Entrega: ${persistedOrder.delivery_mode === 'pickup' ? 'Retiro en el local' : 'Delivery'}`,
         ...(persistedOrder.delivery_mode === 'delivery' ? [
           `📍 Dirección: ${persistedOrder.delivery_address ?? ''}`,
+          ...(persistedOrder.delivery_references?.trim()
+            ? [`Referencias: ${persistedOrder.delivery_references.trim()}`]
+            : []),
           `Costo de envío: ${persistedOrder.delivery_fee === null ? 'Pendiente de cotización' : money(persistedOrder.delivery_fee)}`,
         ] : []),
         '',
+        `Subtotal: ${money(persistedOrder.subtotal)}`,
+        ...(persistedOrder.discount_total > 0
+          ? [`Descuento en efectivo: -${money(persistedOrder.discount_total)}`]
+          : []),
         `💰 TOTAL: ${persistedOrder.total === null ? 'Total pendiente' : money(persistedOrder.total)}`,
         '',
-        '🏦 PAGO POR TRANSFERENCIA',
-        `Alias: ${transferAlias}`,
-        '',
-        '📎 Enviaré el comprobante por este chat.',
-        '',
-        '⏳ Pedido pendiente de pago.',
+        ...(persistedOrder.payment_method === 'transfer' ? [
+          '🏦 PAGO POR TRANSFERENCIA',
+          `Alias: ${transferAlias}`,
+          '',
+          ...(persistedOrder.total === null
+            ? ['⏳ Pendiente de cotización. No transferir hasta conocer el total definitivo.']
+            : ['📎 Enviaré el comprobante por este chat.', '', '⏳ Pedido pendiente de pago.']),
+        ] : [
+          '💵 PAGO EN EFECTIVO',
+          '⏳ Pago pendiente al retirar o recibir el pedido.',
+        ]),
       ].join('\n');
       const orderUrl = selected.phone ? whatsappUrl(selected.phone, orderMessage) : null;
       if (!orderUrl) {
         throw new Error('El pedido se registró, pero el WhatsApp público del emprendimiento no es válido.');
       }
-      const receiptMessage = persistedOrder.total !== null
+      const receiptMessage = persistedOrder.payment_method === 'transfer' && persistedOrder.total !== null
         ? `Hola, envío el comprobante de transferencia del pedido #${orderLabel} de ${selected.name} por ${money(persistedOrder.total)}.`
         : null;
       try {
@@ -804,7 +854,10 @@ export default function Hungry() {
                   <div key={d.id} className="mb-4 border-b border-orange-100 pb-3 last:border-0">
                     <p className="flex justify-between gap-2 text-sm">
                       <span>{cart[d.id]} × {d.name}{d.saleUnit ? ` (${d.saleUnit})` : ''}</span>
-                      <strong>{money(cart[d.id] * d.price)}</strong>
+                      <strong>{money(
+                        cart[d.id] * d.price *
+                        (method === 'cash' ? 1 - (d.cashDiscountPercent ?? 0) / 100 : 1),
+                      )}</strong>
                     </p>
                     <label htmlFor={`product-note-${d.id}`} className="mt-2 block text-sm font-semibold">Observaciones para {d.name}</label>
                     <textarea
@@ -835,6 +888,11 @@ export default function Hungry() {
                     </p>
                   )}
                   <p className="flex justify-between"><span>Subtotal</span><strong>{money(subtotal)}</strong></p>
+                  {discountTotal > 0 && (
+                    <p className="mt-1 flex justify-between text-green-800">
+                      <span>Descuento en efectivo</span><strong>-{money(discountTotal)}</strong>
+                    </p>
+                  )}
                   <p className="mt-1 flex justify-between">
                     <span>{selected.kind === 'supplier' ? 'Envío (demo)' : 'Envío'}</span>
                     <strong>{delivery === 'delivery' && deliveryFee === null ? 'Envío a confirmar' : money(deliveryFee ?? 0)}</strong>
@@ -913,8 +971,48 @@ export default function Hungry() {
                     )}
                   </div>
                 )}
-                <p className="mb-3 font-semibold">Medio de pago: Transferencia bancaria</p>
-                {lines.length > 0 && selected.kind === 'business' && (
+                <fieldset className="mb-3">
+                  <legend className="mb-2 font-semibold">Elegí el medio de pago</legend>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className={`flex items-start gap-2 rounded-lg border p-3 ${cashAvailable ? 'cursor-pointer border-orange-200' : 'cursor-not-allowed border-gray-200 opacity-50'}`}>
+                      <input
+                        type="radio"
+                        name="payment-method"
+                        value="cash"
+                        checked={method === 'cash'}
+                        disabled={!cashAvailable}
+                        onChange={() => choosePaymentMethod('cash')}
+                      />
+                      <span>
+                        <strong className="block">Efectivo</strong>
+                        <span className="text-sm text-gray-600">Al retirar o recibir</span>
+                      </span>
+                    </label>
+                    <label className={`flex items-start gap-2 rounded-lg border p-3 ${transferAvailable ? 'cursor-pointer border-orange-200' : 'cursor-not-allowed border-gray-200 opacity-50'}`}>
+                      <input
+                        type="radio"
+                        name="payment-method"
+                        value="transfer"
+                        checked={method === 'transfer'}
+                        disabled={!transferAvailable}
+                        onChange={() => choosePaymentMethod('transfer')}
+                      />
+                      <span>
+                        <strong className="block">Transferencia bancaria</strong>
+                        <span className="text-sm text-gray-600">Alias del emprendimiento</span>
+                      </span>
+                    </label>
+                  </div>
+                  {lines.length === 0 && (
+                    <p className="mt-2 text-sm text-gray-600">Agregá productos para ver los medios de pago disponibles.</p>
+                  )}
+                  {lines.length > 0 && !cashAvailable && !transferAvailable && (
+                    <p role="alert" className="mt-2 rounded-lg bg-red-50 p-3 text-sm text-red-800">
+                      No hay un medio de pago común aceptado por todos los productos del carrito.
+                    </p>
+                  )}
+                </fieldset>
+                {method === 'transfer' && lines.length > 0 && selected.kind === 'business' && (
                   <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm">
                     <h4 className="font-bold">Datos para transferir</h4>
                     <p className="mt-2"><strong>{total === null ? 'Total pendiente:' : 'Total:'}</strong> {total === null ? 'A confirmar por el costo de envío' : money(total)}</p>
@@ -935,6 +1033,11 @@ export default function Hungry() {
                     </p>
                   </div>
                 )}
+                {method === 'cash' && lines.length > 0 && (
+                  <p className="mb-3 rounded-lg bg-green-50 p-3 text-sm text-green-900">
+                    El pago queda pendiente y se realiza en efectivo al retirar o recibir el pedido.
+                  </p>
+                )}
                 {lines.length > 0 && (
                   <section className="mt-4 rounded-xl border border-orange-200 bg-orange-50 p-4" aria-label="Resumen del pedido">
                     <h4 className="font-black">Resumen del pedido</h4>
@@ -942,8 +1045,20 @@ export default function Hungry() {
                       {lines.map(dish => (
                         <li key={`summary-${dish.id}`}>
                           <div className="flex justify-between gap-2">
-                            <span>{cart[dish.id]} × {dish.name} · {money(dish.price)} c/u</span>
-                            <strong>{money(cart[dish.id] * dish.price)}</strong>
+                            <span>
+                              {cart[dish.id]} × {dish.name} · {money(
+                                dish.price *
+                                (method === 'cash'
+                                  ? 1 - (dish.cashDiscountPercent ?? 0) / 100
+                                  : 1),
+                              )} c/u
+                            </span>
+                            <strong>{money(
+                              cart[dish.id] * dish.price *
+                              (method === 'cash'
+                                ? 1 - (dish.cashDiscountPercent ?? 0) / 100
+                                : 1),
+                            )}</strong>
                           </div>
                           {productNotes[dish.id]?.trim() && <p className="mt-1 text-gray-700">Observación: {productNotes[dish.id].trim()}</p>}
                         </li>
@@ -952,9 +1067,10 @@ export default function Hungry() {
                     {orderNotes.trim() && <p className="mt-2 text-sm"><strong>Observaciones generales:</strong> {orderNotes.trim()}</p>}
                     <p className="mt-2 text-sm"><strong>Entrega:</strong> {delivery === 'pickup' ? 'Retiro en el local' : `Delivery · ${address.trim() || 'Dirección pendiente'}`}</p>
                     {delivery === 'delivery' && deliveryReferences.trim() && <p className="mt-1 text-sm"><strong>Referencias:</strong> {deliveryReferences.trim()}</p>}
-                    <p className="mt-1 text-sm"><strong>Pago:</strong> Transferencia bancaria</p>
+                    <p className="mt-1 text-sm"><strong>Pago:</strong> {method === 'cash' ? 'Efectivo' : 'Transferencia bancaria'}</p>
                     <div className="mt-3 space-y-1 border-t border-orange-200 pt-2 text-sm">
                       <p className="flex justify-between"><span>Subtotal</span><strong>{money(subtotal)}</strong></p>
+                      {discountTotal > 0 && <p className="flex justify-between text-green-800"><span>Descuento en efectivo</span><strong>-{money(discountTotal)}</strong></p>}
                       <p className="flex justify-between"><span>Costo de envío</span><strong>{delivery === 'delivery' && deliveryFee === null ? 'Envío a confirmar' : money(deliveryFee ?? 0)}</strong></p>
                       <p className="flex justify-between text-base font-black"><span>{total === null ? 'Total pendiente de cotización' : 'Total'}</span><span>{total === null ? 'A confirmar' : money(total)}</span></p>
                     </div>
@@ -970,9 +1086,9 @@ export default function Hungry() {
                     Las observaciones y referencias se guardarán junto con el pedido.
                   </p>
                 )}
-                {selected.kind === 'business' && !transferAvailable && lines.length > 0 && (
+                {selected.kind === 'business' && !selectedPaymentAvailable && lines.length > 0 && (
                   <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">
-                    El emprendimiento y todos los productos deben aceptar transferencia bancaria.
+                    Todos los productos del carrito deben aceptar el medio de pago elegido.
                   </p>
                 )}
                 {transferDetailsMissing && (

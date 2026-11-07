@@ -1463,8 +1463,8 @@ begin
   if p_delivery_mode is null or p_delivery_mode not in ('pickup', 'delivery') then
     raise exception 'Unsupported delivery mode';
   end if;
-  if p_payment_method is distinct from 'transfer' then
-    raise exception 'The new checkout supports bank transfer only';
+  if p_payment_method is null or p_payment_method not in ('cash', 'transfer') then
+    raise exception 'Unsupported payment method';
   end if;
   if p_customer_notes is not null and length(btrim(p_customer_notes)) > 1000 then
     raise exception 'Order notes cannot exceed 1000 characters';

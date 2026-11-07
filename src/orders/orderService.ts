@@ -75,10 +75,22 @@ export type WhatsAppOrderDetails = {
   customer_phone: string | null;
   delivery_mode: 'pickup' | 'delivery';
   delivery_address: string | null;
+  delivery_references: string | null;
+  delivery_fee_status: DeliveryFeeStatus;
+  payment_method: 'cash' | 'transfer';
+  payment_status: PaymentStatus | null;
+  subtotal: number;
+  discount_total: number;
   delivery_fee: number | null;
   total: number | null;
   transfer_alias: string | null;
-  items: { product_name: string; quantity: number; line_total: number }[];
+  customer_notes: string | null;
+  items: {
+    product_name: string;
+    quantity: number;
+    line_total: number;
+    customer_notes: string | null;
+  }[];
 };
 
 type OrderRecord = {
@@ -304,20 +316,27 @@ export async function getWhatsAppOrderDetails(
   const orderResult = isOrderCheckoutV2Enabled
     ? await client
       .from('morfi_orders')
-      .select('order_number, customer_name_snapshot, customer_phone_snapshot, delivery_mode, delivery_address, delivery_fee, total, transfer_alias_snapshot')
+      .select('order_number, customer_name_snapshot, customer_phone_snapshot, delivery_mode, delivery_address, delivery_references, delivery_fee_status, payment_method, payment_status, subtotal, discount_total, delivery_fee, total, transfer_alias_snapshot, customer_notes')
       .eq('id', orderId)
       .single()
     : await client
       .from('morfi_orders')
-      .select('customer_name_snapshot, customer_phone_snapshot, delivery_mode, delivery_address, delivery_fee, total')
+      .select('customer_name_snapshot, customer_phone_snapshot, delivery_mode, delivery_address, payment_method, subtotal, delivery_fee, total')
       .eq('id', orderId)
       .single();
   if (orderResult.error) throw orderResult.error;
-  const { data: items, error: itemsError } = await client
-    .from('morfi_order_items')
-    .select('product_name, quantity, line_total')
-    .eq('order_id', orderId)
-    .order('product_name', { ascending: true });
+  const itemsResult = isOrderCheckoutV2Enabled
+    ? await client
+      .from('morfi_order_items')
+      .select('product_name, quantity, line_total, customer_notes')
+      .eq('order_id', orderId)
+      .order('product_name', { ascending: true })
+    : await client
+      .from('morfi_order_items')
+      .select('product_name, quantity, line_total')
+      .eq('order_id', orderId)
+      .order('product_name', { ascending: true });
+  const { data: items, error: itemsError } = itemsResult;
   if (itemsError) throw itemsError;
   if (items.length === 0) {
     throw new Error('El pedido se registró sin productos consultables.');
@@ -327,6 +346,33 @@ export async function getWhatsAppOrderDetails(
   const transferAlias = isOrderCheckoutV2Enabled && 'transfer_alias_snapshot' in order
     ? order.transfer_alias_snapshot
     : transferDetails.alias;
+  const rawDeliveryFeeStatus = isOrderCheckoutV2Enabled && 'delivery_fee_status' in order
+    ? order.delivery_fee_status
+    : null;
+  const deliveryFeeStatus: DeliveryFeeStatus =
+    rawDeliveryFeeStatus === 'pending' ||
+    rawDeliveryFeeStatus === 'free' ||
+    rawDeliveryFeeStatus === 'fixed' ||
+    rawDeliveryFeeStatus === 'not_applicable' ||
+    rawDeliveryFeeStatus === 'legacy'
+      ? rawDeliveryFeeStatus
+      : order.delivery_mode === 'delivery' ? 'legacy' : 'not_applicable';
+  const rawPaymentStatus = isOrderCheckoutV2Enabled && 'payment_status' in order
+    ? order.payment_status
+    : null;
+  const paymentStatus: PaymentStatus | null =
+    rawPaymentStatus === 'not_applicable' ||
+    rawPaymentStatus === 'awaiting_collection' ||
+    rawPaymentStatus === 'awaiting_delivery_quote' ||
+    rawPaymentStatus === 'pending_payment' ||
+    rawPaymentStatus === 'pending_verification' ||
+    rawPaymentStatus === 'verified' ||
+    rawPaymentStatus === 'rejected'
+      ? rawPaymentStatus
+      : null;
+  const rawCustomerNotes = isOrderCheckoutV2Enabled && 'customer_notes' in order
+    ? order.customer_notes
+    : null;
   return {
     order_number: isOrderCheckoutV2Enabled && 'order_number' in order && order.order_number !== null
       ? Number(order.order_number)
@@ -335,13 +381,28 @@ export async function getWhatsAppOrderDetails(
     customer_phone: order.customer_phone_snapshot,
     delivery_mode: order.delivery_mode,
     delivery_address: order.delivery_address,
+    delivery_references: isOrderCheckoutV2Enabled && 'delivery_references' in order &&
+      typeof order.delivery_references === 'string'
+      ? order.delivery_references
+      : null,
+    delivery_fee_status: deliveryFeeStatus,
+    payment_method: order.payment_method,
+    payment_status: paymentStatus,
+    subtotal: Number(order.subtotal),
+    discount_total: isOrderCheckoutV2Enabled && 'discount_total' in order
+      ? Number(order.discount_total ?? 0)
+      : 0,
     delivery_fee: order.delivery_fee === null ? null : Number(order.delivery_fee),
     total: order.total === null ? null : Number(order.total),
     transfer_alias: typeof transferAlias === 'string' ? transferAlias : null,
+    customer_notes: typeof rawCustomerNotes === 'string' ? rawCustomerNotes : null,
     items: items.map(item => ({
       product_name: item.product_name,
       quantity: item.quantity,
       line_total: Number(item.line_total),
+      customer_notes: 'customer_notes' in item && typeof item.customer_notes === 'string'
+        ? item.customer_notes
+        : null,
     })),
   };
 }
@@ -354,7 +415,7 @@ export async function createMealOrder(input: {
   deliveryAddress: string | null;
   deliveryReferences?: string | null;
   customerNotes?: string | null;
-  paymentMethod: 'transfer';
+  paymentMethod: 'cash' | 'transfer';
   requestKey: string;
 }): Promise<{ id: string; orderNumber: number | null }> {
   const client = getSupabase();
