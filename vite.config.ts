@@ -19,9 +19,15 @@ export default defineConfig({
         theme_color: '#F07821',
         icons: [
           {
-            src: '/morfi-icon.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
+            src: '/icono-morfi-192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'any'
+          },
+          {
+            src: '/icono-morfi-512.png',
+            sizes: '512x512',
+            type: 'image/png',
             purpose: 'any'
           }
         ]

@@ -5,6 +5,7 @@ import Hungry from './pages/Hungry';
 import Business from './pages/Business';
 import Savings from './pages/Savings';
 import Auth from './pages/Auth';
+import EmailVerification from './pages/EmailVerification';
 import { AuthProvider, useAuth } from './AuthContext';
 
 /* ─── SVG Icons ──────────────────────────────────────────────── */
@@ -33,14 +34,6 @@ const IconStore = ({ className = '' }) => (
   </svg>
 );
 
-const IconCart = ({ className = '' }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="9" cy="21" r="1"/>
-    <circle cx="20" cy="21" r="1"/>
-    <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
-  </svg>
-);
-
 const IconUser = ({ className = '' }) => (
   <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
     <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
@@ -59,11 +52,11 @@ const IconMenu = ({ className = '' }) => (
 /* ─── MORFI logo ─────────────────────────────────────────────── */
 export const MorfiLogoSVG: React.FC<{ size?: number }> = ({ size = 44 }) => (
   <img
-    src="/morfi-logo-nuevo.jpeg"
+    src="/MORFI_logo_naranja_transparente.png"
     alt="MORFI"
-    width={size * 3.5}
+    width={size * 1089 / 994}
     height={size}
-    className="shrink-0 object-contain"
+    className="h-auto max-h-full max-w-full shrink-0 object-contain"
   />
 );
 
@@ -79,7 +72,6 @@ const DesktopHeader: React.FC = () => {
     { to: '/', label: 'Inicio', icon: <IconHome className="w-5 h-5 mx-auto mb-0.5"/> },
     { to: '/hungry', label: 'Tengo hambre', icon: <IconFork className="w-5 h-5 mx-auto mb-0.5"/> },
     { to: '/business', label: 'Mi emprendimiento', icon: <IconStore className="w-5 h-5 mx-auto mb-0.5"/> },
-    { to: '/savings', label: 'Ahorro', icon: <IconCart className="w-5 h-5 mx-auto mb-0.5"/> },
   ];
 
   return (
@@ -157,7 +149,6 @@ const MobileBottomNav: React.FC = () => {
     { to: '/', label: 'Inicio', icon: (c: string) => <IconHome className={c}/> },
     { to: '/hungry', label: 'Tengo hambre', icon: (c: string) => <IconFork className={c}/> },
     { to: '/business', label: 'Emprendimiento', icon: (c: string) => <IconStore className={c}/> },
-    { to: '/savings', label: 'Ahorro', icon: (c: string) => <IconCart className={c}/> },
   ];
 
   return (
@@ -206,6 +197,7 @@ const App: React.FC = () => (
             <Route path="/savings" element={<Savings />} />
             <Route path="/login" element={<Auth initialMode="login" />} />
             <Route path="/register" element={<Auth initialMode="register" />} />
+            <Route path="/auth/callback" element={<EmailVerification />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
