@@ -21,19 +21,45 @@ function argentinaPhone(phone: string): string {
 
 function messageFor(error: unknown) {
   const message = error instanceof Error ? error.message : '';
+  const code = error instanceof Error && 'code' in error && typeof error.code === 'string'
+    ? error.code
+    : '';
   if (/invalid login credentials|invalid credentials/i.test(message)) return 'El correo o la contraseña no son correctos.';
   if (/invalid email|email address.*invalid|unable to validate email/i.test(message)) return 'El correo electrónico no tiene un formato válido. Revisá que esté escrito correctamente.';
   if (/email not confirmed/i.test(message)) return 'Confirmá tu correo desde el enlace que te enviamos antes de ingresar.';
-  if (/already registered|already exists|user already registered/i.test(message)) return 'Ese correo ya tiene una cuenta. Elegí “Ingresar” para continuar.';
+  if (/already registered|already exists|user already registered/i.test(message) || code === 'user_already_exists') return 'Ese correo ya tiene una cuenta. Elegí “Ingresar” para continuar.';
   if (/morfi_profiles_dni_unique|duplicate key.*dni/i.test(message)) return 'Ya existe una cuenta emprendedora registrada con ese DNI.';
   if (/password.*(weak|short|breached|compromised|contain)|should be at least|password.*requirements/i.test(message)) return 'La contraseña no cumple los requisitos. Usá al menos 8 caracteres y revisá las indicaciones del campo.';
   if (/rate limit|too many requests/i.test(message)) return 'Se realizaron demasiados intentos. Esperá unos minutos e intentá de nuevo.';
   if (/email.*(smtp|provider|send)/i.test(message)) return 'No se pudo enviar el correo. Revisá que el proveedor Email y el envío de correos estén configurados en Supabase.';
-  if (/database error saving new user/i.test(message)) return 'No se pudo crear la cuenta. Verificá que estén aplicadas las migraciones de MORFI para el registro de emprendimientos.';
+  if (/database error saving new user/i.test(message) || code === 'database_error') {
+    return 'Supabase no pudo guardar la cuenta: el alta de emprendedores ejecuta funciones de base de datos al crear el usuario. Puede faltar una tabla, columna o trigger de MORFI. Revisá los Auth Logs de Supabase; no vuelvas a registrarte hasta confirmar si la cuenta llegó a crearse.';
+  }
+  if (/invalid api key|no api key|invalid jwt/i.test(message)) {
+    return 'Supabase rechazó las credenciales de conexión de esta versión. Revisá VITE_SUPABASE_URL y VITE_SUPABASE_PUBLISHABLE_KEY en las variables de Preview de Vercel y redeployá.';
+  }
+  if (/registro sin usuario|no se recibió una respuesta de cuenta/i.test(message)) {
+    return 'Supabase no confirmó la creación de la cuenta. Revisá la configuración de Preview y los Auth Logs antes de volver a intentarlo.';
+  }
   if (/fetch|network/i.test(message)) return 'No se pudo conectar con Supabase. Revisá la URL y tu conexión a internet.';
   return message
     ? `No se pudo completar la operación: ${message}`
     : 'No se pudo completar la operación. Revisá los datos e intentá nuevamente.';
+}
+
+function logSignupFailure(error: unknown) {
+  if (error instanceof Error) {
+    const details = error as Error & { code?: unknown; status?: unknown };
+    console.error('Falló el registro en Supabase Auth:', {
+      name: error.name,
+      message: error.message,
+      code: typeof details.code === 'string' ? details.code : undefined,
+      status: typeof details.status === 'number' ? details.status : undefined,
+    });
+    return;
+  }
+
+  console.error('Falló el registro en Supabase Auth con un error no estándar.');
 }
 
 export default function Auth({ initialMode }: { initialMode: AuthMode }) {
@@ -196,15 +222,15 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
         if (profileType === 'emprendimiento' && (!businessName.trim() || !businessLocation.trim())) {
           throw new Error('Datos del emprendimiento incompletos');
         }
+        if (profileType === 'emprendimiento' && !acceptsCash && !acceptsTransfer) {
+          throw new Error('Elegí al menos un medio de pago.');
+        }
         if (
           profileType === 'emprendimiento' &&
           (businessName.trim().length > 120 ||
             businessDescription.trim().length > 2000 ||
             businessLocation.trim().length > 180)
         ) throw new Error('Datos del emprendimiento demasiado largos');
-        if (profileType === 'emprendimiento' && !acceptsCash && !acceptsTransfer) {
-          throw new Error('Medios de pago incompletos');
-        }
         const normalizedCuit = bankCuit.replace(/\D/g, '');
         const selectedBankName = bankName === 'Otro' ? otherBankName.trim() : bankName.trim();
         if (profileType === 'emprendimiento' && acceptsTransfer && (
@@ -270,8 +296,18 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
           },
         });
         if (error) {
-          if (pendingSetupSaved) await removePendingBusinessSetup(normalizedEmail);
+          logSignupFailure(error);
+          if (pendingSetupSaved) {
+            try {
+              await removePendingBusinessSetup(normalizedEmail);
+            } catch (cleanupError) {
+              console.error('No se pudo limpiar el guardado local tras fallar el registro:', cleanupError);
+            }
+          }
           throw error;
+        }
+        if (!data.user) {
+          throw new Error('Registro sin usuario');
         }
         if (data.session && data.user) {
           await refreshProfile(data.user.id);
@@ -324,7 +360,7 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
       else if (/Datos del emprendimiento incompletos/.test(message)) setErrorMessage('Completá el nombre y la dirección de tu emprendimiento.');
       else if (/Datos del emprendimiento demasiado largos/.test(message)) setErrorMessage('Revisá los largos: nombre hasta 120, descripción hasta 2000 y dirección hasta 180 caracteres.');
       else if (/Datos de transferencia incompletos/.test(message)) setErrorMessage('Para aceptar transferencias, completá banco, alias, titular y un CUIT de 11 números.');
-      else if (/Medios de pago incompletos/.test(message)) setErrorMessage('Elegí al menos un medio de pago: efectivo o transferencia.');
+      else if (/Elegí al menos un medio de pago/.test(message)) setErrorMessage(message);
       else if (/Logo inválido/.test(message)) setErrorMessage('El logo debe ser JPG, PNG o WebP y pesar hasta 5 MB.');
       else if (/Datos de registro incompletos/.test(message)) setErrorMessage('Completá tu nombre, correo electrónico y una contraseña de al menos 8 caracteres.');
       else if (/nueva contraseña/.test(message)) setErrorMessage(message);
@@ -488,7 +524,7 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
                       Acepto transferencias
                     </label>
                     {acceptsTransfer && (
-                      <div className="mt-3 grid gap-3">
+                    <div className="mt-3 grid gap-3">
                         <label className="block text-sm font-semibold">
                           Banco o billetera
                           <select value={bankName} onChange={event => setBankName(event.target.value)} className={inputClass} required>
@@ -501,7 +537,7 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
                         <label className="block text-sm font-semibold">Alias<input value={transferAlias} onChange={event => setTransferAlias(event.target.value)} maxLength={120} className={inputClass} required /></label>
                         <label className="block text-sm font-semibold">Titular de la cuenta<input value={transferHolder} onChange={event => setTransferHolder(event.target.value)} maxLength={120} className={inputClass} required /></label>
                         <label className="block text-sm font-semibold">CUIT del titular<input inputMode="numeric" value={bankCuit} onChange={event => setBankCuit(event.target.value)} maxLength={13} className={inputClass} required /></label>
-                      </div>
+                    </div>
                     )}
                   </fieldset>
                   <div className="rounded-lg border p-3">
@@ -513,7 +549,7 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
                       className="mt-2 block w-full text-sm"
                     />
                     {businessLogo && <p className="mt-1 text-xs text-gray-600">{businessLogo.name}</p>}
-                    {businessLogoPreview && <img src={businessLogoPreview} alt="Vista previa del logo" className="mt-3 h-24 w-24 rounded-xl border bg-white object-contain p-1" />}
+                    {businessLogoPreview && <img src={businessLogoPreview} alt="Vista previa del logo" className="mt-3 h-24 w-24 rounded-full border bg-white object-contain p-1" />}
                     <p className="mt-1 text-xs text-gray-600">Podés agregarlo ahora o más adelante desde tu panel. JPG, PNG o WebP, hasta 5 MB.</p>
                   </div>
                   <div className="rounded-lg border p-3">

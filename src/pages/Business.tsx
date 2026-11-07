@@ -7,8 +7,13 @@ import type { BusinessSection } from './BusinessWorkflow';
 import { useAuth } from '../AuthContext';
 import { isIngredient, isRecipe } from '../business/calculations';
 import {
+  deliveryFeeStatusLabel,
+  isOrderCheckoutV2Enabled,
   listBusinessMealOrders,
   orderStatusLabel,
+  paymentStatusLabel,
+  reviewMealOrderTransfer,
+  setMealOrderDeliveryFee,
   subscribeToMealOrders,
   updateMealOrderStatus,
 } from '../orders/orderService';
@@ -21,6 +26,8 @@ import {
   listManagedBusinesses,
   uploadBusinessLogo,
   updateBusinessCoordinates,
+  updateBusinessLocation,
+  updateBusinessPhoneVisibility,
   updateBusinessPublication,
   updateBusinessProduct,
 } from '../business/businessService';
@@ -142,7 +149,9 @@ function nextOrderStatuses(order: MealOrder): OrderStatus[] {
     case 'pending': return ['accepted', 'rejected'];
     case 'accepted': return ['preparing'];
     case 'preparing': return ['ready'];
-    case 'ready': return [order.delivery_mode === 'delivery' ? 'on_the_way' : 'delivered'];
+    case 'ready': return order.delivery_mode === 'delivery'
+      ? order.delivery_fee_status === 'pending' ? [] : ['on_the_way']
+      : ['delivered'];
     case 'on_the_way': return ['delivered'];
     case 'cancellation_requested': return ['cancelled'];
     default: return [];
@@ -171,7 +180,7 @@ export default function Business() {
   const [price, setPrice] = useState('');
   const [isAvailable, setIsAvailable] = useState(true);
   const [acceptsDelivery, setAcceptsDelivery] = useState(false);
-  const [paymentMethods, setPaymentMethods] = useState<('cash' | 'transfer')[]>(['cash']);
+  const [productPaymentMethods, setProductPaymentMethods] = useState<('cash' | 'transfer')[]>(['cash', 'transfer']);
   const [cashDiscountPercent, setCashDiscountPercent] = useState('');
   const [yieldQuantity, setYieldQuantity] = useState('');
   const [additionalCosts, setAdditionalCosts] = useState('0');
@@ -193,18 +202,20 @@ export default function Business() {
   const [businessName, setBusinessName] = useState('');
   const [businessDescription, setBusinessDescription] = useState('');
   const [businessPhone, setBusinessPhone] = useState(profile?.phone ?? '');
+  const [businessPhonePublic, setBusinessPhonePublic] = useState(false);
   const [businessLocation, setBusinessLocation] = useState('');
+  const [businessDirections, setBusinessDirections] = useState('');
   const [businessLatitude, setBusinessLatitude] = useState<number | null>(null);
   const [businessLongitude, setBusinessLongitude] = useState<number | null>(null);
   const [businessLocationNotice, setBusinessLocationNotice] = useState('');
   const [businessLogo, setBusinessLogo] = useState<File | null>(null);
   const [businessLogoPreview, setBusinessLogoPreview] = useState('');
+  const [acceptsCash, setAcceptsCash] = useState(true);
+  const [acceptsTransfer, setAcceptsTransfer] = useState(false);
   const businessLogoInput = useRef<HTMLInputElement>(null);
   const managedLogoInput = useRef<HTMLInputElement>(null);
   const [logoBusinessId, setLogoBusinessId] = useState<string | null>(null);
   const [uploadingLogoBusinessId, setUploadingLogoBusinessId] = useState<string | null>(null);
-  const [acceptsCash, setAcceptsCash] = useState(true);
-  const [acceptsTransfer, setAcceptsTransfer] = useState(false);
   const [bankName, setBankName] = useState('');
   const [otherBankName, setOtherBankName] = useState('');
   const [transferAlias, setTransferAlias] = useState('');
@@ -215,6 +226,14 @@ export default function Business() {
   const [publicationNotice, setPublicationNotice] = useState('');
   const [publicationError, setPublicationError] = useState('');
   const [publicationBusyId, setPublicationBusyId] = useState<string | null>(null);
+  const [editingLocationBusinessId, setEditingLocationBusinessId] = useState<string | null>(null);
+  const [locationDraft, setLocationDraft] = useState('');
+  const [directionsDraft, setDirectionsDraft] = useState('');
+  const [locationSaveError, setLocationSaveError] = useState('');
+  const [locationSaveNotice, setLocationSaveNotice] = useState('');
+  const [savingLocationBusinessId, setSavingLocationBusinessId] = useState<string | null>(null);
+  const [phoneVisibilityError, setPhoneVisibilityError] = useState('');
+  const [phoneVisibilitySavingId, setPhoneVisibilitySavingId] = useState<string | null>(null);
   const [businessesReload, setBusinessesReload] = useState(0);
   const [selectedBusinessId, setSelectedBusinessId] = useState('');
   const [productsLoading, setProductsLoading] = useState(false);
@@ -338,12 +357,13 @@ export default function Business() {
       setBusinessFormError('Completá la dirección del punto de venta y el WhatsApp para recibir pedidos.');
       return;
     }
-    if (!acceptsCash && !acceptsTransfer) {
-      setBusinessFormError('Elegí al menos un medio de pago: efectivo o transferencia.');
+    if (trimmedName.length > 120 || trimmedDescription.length > 2000 ||
+      trimmedLocation.length > 180 || businessDirections.trim().length > 300) {
+      setBusinessFormError('Revisá los largos: nombre hasta 120, descripción hasta 2000, dirección hasta 180 y referencia hasta 300 caracteres.');
       return;
     }
-    if (trimmedName.length > 120 || trimmedDescription.length > 2000 || trimmedLocation.length > 180) {
-      setBusinessFormError('Revisá los largos: nombre hasta 120, descripción hasta 2000 y dirección hasta 180 caracteres.');
+    if (!acceptsCash && !acceptsTransfer) {
+      setBusinessFormError('Elegí al menos un medio de pago.');
       return;
     }
     if (acceptsTransfer && (
@@ -352,7 +372,7 @@ export default function Business() {
       !transferHolder.trim() ||
       !/^\d{11}$/.test(normalizedCuit)
     )) {
-      setBusinessFormError('Para aceptar transferencias, completá banco, alias, titular y un CUIT de 11 números.');
+      setBusinessFormError('Para recibir pedidos, completá banco, alias, titular y un CUIT de 11 números.');
       return;
     }
     if (businessLogo && (
@@ -369,7 +389,9 @@ export default function Business() {
         name: trimmedName,
         description: trimmedDescription,
         contact_phone: trimmedPhone,
+        phone_is_public: businessPhonePublic,
         location: trimmedLocation,
+        directions: businessDirections.trim(),
         latitude: businessLatitude,
         longitude: businessLongitude,
         bank_name: acceptsTransfer ? selectedBankName : null,
@@ -387,7 +409,9 @@ export default function Business() {
       setBusinessName('');
       setBusinessDescription('');
       setBusinessPhone(profile?.phone ?? '');
+      setBusinessPhonePublic(false);
       setBusinessLocation('');
+      setBusinessDirections('');
       setBusinessLatitude(null);
       setBusinessLongitude(null);
       setBusinessLocationNotice('');
@@ -420,6 +444,50 @@ export default function Business() {
       setBusinessFormError(`No se pudo registrar el emprendimiento: ${detail}`);
     } finally {
       setCreatingBusiness(false);
+    }
+  }
+
+  async function saveBusinessLocation(businessId: string) {
+    const trimmedLocation = locationDraft.trim();
+    const trimmedDirections = directionsDraft.trim();
+    setLocationSaveError('');
+    setLocationSaveNotice('');
+    if (!trimmedLocation || trimmedLocation.length > 180 || trimmedDirections.length > 300) {
+      setLocationSaveError('Ingresá una dirección de hasta 180 caracteres y una referencia opcional de hasta 300.');
+      return;
+    }
+
+    setSavingLocationBusinessId(businessId);
+    try {
+      await updateBusinessLocation(businessId, trimmedLocation, trimmedDirections);
+      setManagedBusinesses(current => current.map(business =>
+        business.id === businessId
+          ? { ...business, location: trimmedLocation, directions: trimmedDirections }
+          : business,
+      ));
+      setEditingLocationBusinessId(null);
+      setLocationSaveNotice('La dirección y la referencia se guardaron.');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setLocationSaveError(`No se pudo actualizar la ubicación: ${detail}`);
+    } finally {
+      setSavingLocationBusinessId(null);
+    }
+  }
+
+  async function setBusinessPhoneVisibility(businessId: string, isPublic: boolean) {
+    setPhoneVisibilityError('');
+    setPhoneVisibilitySavingId(businessId);
+    try {
+      await updateBusinessPhoneVisibility(businessId, isPublic);
+      setManagedBusinesses(current => current.map(business =>
+        business.id === businessId ? { ...business, phone_is_public: isPublic } : business,
+      ));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setPhoneVisibilityError(`No se pudo actualizar la visibilidad del WhatsApp: ${detail}`);
+    } finally {
+      setPhoneVisibilitySavingId(null);
     }
   }
 
@@ -561,8 +629,8 @@ export default function Business() {
   }, [selectedBusinessId]);
 
   const sales = orders
-    .filter(order => order.status === 'delivered')
-    .reduce((sum, order) => sum + order.total, 0);
+    .filter(order => order.status === 'delivered' && order.total !== null)
+    .reduce((sum, order) => sum + (order.total ?? 0), 0);
 
   const pending = orders.filter(order => !['delivered', 'rejected', 'cancelled'].includes(order.status)).length;
   const recipeYield = Number(yieldQuantity);
@@ -606,10 +674,10 @@ export default function Business() {
     }));
     if (
       !name.trim() ||
+      productPaymentMethods.length === 0 ||
       name.trim().length > 160 ||
       description.trim().length > 1000 ||
       !Number.isFinite(amount) || amount <= 0 ||
-      paymentMethods.length === 0 ||
       (cashDiscountPercent.trim() !== '' && (
         !Number.isFinite(Number(cashDiscountPercent)) ||
         Number(cashDiscountPercent) < 0 ||
@@ -725,7 +793,7 @@ export default function Business() {
       price: amount,
       is_available: isAvailable,
       accepts_delivery: acceptsDelivery,
-      payment_methods: paymentMethods,
+      payment_methods: productPaymentMethods,
       cash_discount_percent: cashDiscountPercent.trim() ? Number(cashDiscountPercent) : null,
     };
 
@@ -755,7 +823,7 @@ export default function Business() {
     setPrice('');
     setIsAvailable(true);
     setAcceptsDelivery(false);
-    setPaymentMethods(['cash']);
+    setProductPaymentMethods(['cash', 'transfer']);
     setCashDiscountPercent('');
     setYieldQuantity('');
     setAdditionalCosts('0');
@@ -798,8 +866,8 @@ export default function Business() {
     setPrice(String(product.price));
     setIsAvailable(product.available);
     setAcceptsDelivery(product.acceptsDelivery ?? false);
-    setPaymentMethods(product.paymentMethods?.length ? product.paymentMethods : ['cash']);
     setCashDiscountPercent(product.cashDiscountPercent == null ? '' : String(product.cashDiscountPercent));
+    setProductPaymentMethods(product.paymentMethods ?? []);
     setProductPhoto(product.image ?? '');
     setSaleMode('direct');
     setFormError('');
@@ -873,6 +941,47 @@ export default function Business() {
     }
   }
 
+  async function setDeliveryQuote(order: MealOrder) {
+    const enteredFee = window.prompt('Costo de envío acordado en pesos (ingresá 0 si es gratuito):');
+    if (enteredFee === null) return;
+    const fee = Number(enteredFee.trim().replace(',', '.'));
+    if (!Number.isFinite(fee) || fee < 0) {
+      setOrdersError('Ingresá un costo de envío válido, mayor o igual a cero.');
+      return;
+    }
+
+    setOrderStatusBusyId(order.id);
+    setOrdersError('');
+    try {
+      await setMealOrderDeliveryFee(order.id, fee);
+      setOrders(await listBusinessMealOrders(selectedBusinessId));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setOrdersError(`No se pudo guardar el costo de envío: ${detail}`);
+    } finally {
+      setOrderStatusBusyId(null);
+    }
+  }
+
+  async function reviewTransfer(order: MealOrder, approved: boolean) {
+    const prompt = approved
+      ? '¿Confirmás que verificaste manualmente el ingreso de esta transferencia?'
+      : '¿Rechazás la transferencia? El pedido también se marcará como rechazado y se devolverá el stock.';
+    if (!window.confirm(prompt)) return;
+
+    setOrderStatusBusyId(order.id);
+    setOrdersError('');
+    try {
+      await reviewMealOrderTransfer(order.id, approved);
+      setOrders(await listBusinessMealOrders(selectedBusinessId));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setOrdersError(`No se pudo revisar la transferencia: ${detail}`);
+    } finally {
+      setOrderStatusBusyId(null);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-[#FFF3E5] text-[#8B3F14]">
       <div className="max-w-6xl mx-auto px-5 py-10">
@@ -934,11 +1043,40 @@ export default function Business() {
                     <h3 className="font-bold">{business.name}</h3>
                     {business.description && <p className="mt-1 whitespace-pre-wrap text-sm text-gray-600">{business.description}</p>}
                     {business.location && <p className="mt-1 text-sm text-gray-600">{business.location}</p>}
+                    {business.directions && <p className="mt-1 text-sm text-gray-600">Referencia: {business.directions}</p>}
+                    <label className="mt-2 flex items-start gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={business.phone_is_public}
+                        onChange={event => void setBusinessPhoneVisibility(business.id, event.target.checked)}
+                        disabled={phoneVisibilitySavingId !== null}
+                      />
+                      <span>
+                        {phoneVisibilitySavingId === business.id
+                          ? 'Guardando visibilidad del WhatsApp…'
+                          : 'Mostrar WhatsApp en el catálogo público'}
+                      </span>
+                    </label>
                     <p className={`mt-2 text-sm font-bold ${business.is_published ? 'text-green-700' : 'text-gray-500'}`}>
                       Estado: {business.is_published ? 'Publicado' : 'No publicado'}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingLocationBusinessId(current =>
+                          current === business.id ? null : business.id,
+                        );
+                        setLocationDraft(business.location ?? '');
+                        setDirectionsDraft(business.directions ?? '');
+                        setLocationSaveError('');
+                        setLocationSaveNotice('');
+                      }}
+                      className="rounded-xl border border-[#E8C9AA] px-4 py-2 font-bold"
+                    >
+                      {editingLocationBusinessId === business.id ? 'Cancelar ubicación' : 'Editar ubicación'}
+                    </button>
                     <button
                       type="button"
                       onClick={() => {
@@ -961,10 +1099,46 @@ export default function Business() {
                         : business.is_published ? 'Pausar negocio' : 'Publicar negocio'}
                     </button>
                   </div>
+                  {editingLocationBusinessId === business.id && (
+                    <div className="grid w-full basis-full gap-3 rounded-xl bg-orange-50 p-4">
+                      <label className="text-sm font-semibold">
+                        Dirección exacta
+                        <input
+                          value={locationDraft}
+                          onChange={event => setLocationDraft(event.target.value)}
+                          maxLength={180}
+                          className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
+                          placeholder="Calle, número, barrio y localidad"
+                        />
+                      </label>
+                      <label className="text-sm font-semibold">
+                        Referencia para llegar (opcional)
+                        <textarea
+                          value={directionsDraft}
+                          onChange={event => setDirectionsDraft(event.target.value)}
+                          maxLength={300}
+                          rows={2}
+                          className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
+                          placeholder="Indicaciones breves para encontrar el local"
+                        />
+                      </label>
+                      {locationSaveError && <p role="alert" className="text-sm font-semibold text-red-700">{locationSaveError}</p>}
+                      <button
+                        type="button"
+                        onClick={() => void saveBusinessLocation(business.id)}
+                        disabled={savingLocationBusinessId !== null}
+                        className="w-fit rounded-xl bg-[#8B3F14] px-4 py-2 font-bold text-white disabled:opacity-60"
+                      >
+                        {savingLocationBusinessId === business.id ? 'Guardando…' : 'Guardar ubicación'}
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
           )}
+          {locationSaveNotice && <p role="status" className="mt-3 text-sm font-semibold text-green-800">{locationSaveNotice}</p>}
+          {phoneVisibilityError && <p role="alert" className="mt-3 text-sm font-semibold text-red-700">{phoneVisibilityError}</p>}
 
           <form onSubmit={registerBusiness} className="mt-5 grid gap-3 border-t border-orange-100 pt-5">
             <h3 className="font-bold">Registrar un emprendimiento</h3>
@@ -1003,6 +1177,17 @@ export default function Business() {
               />
             </label>
             <label className="text-sm font-semibold">
+              Referencia para llegar (opcional)
+              <textarea
+                value={businessDirections}
+                onChange={event => setBusinessDirections(event.target.value)}
+                maxLength={300}
+                rows={2}
+                className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
+                placeholder="Indicaciones breves para encontrar el local"
+              />
+            </label>
+            <label className="text-sm font-semibold">
               WhatsApp para recibir pedidos
               <input
                 type="tel"
@@ -1013,6 +1198,14 @@ export default function Business() {
                 className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
                 placeholder="+5492611234567"
               />
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={businessPhonePublic}
+                onChange={event => setBusinessPhonePublic(event.target.checked)}
+              />
+              <span>Autorizo que este WhatsApp se muestre en el catálogo público para recibir consultas y comprobantes.</span>
             </label>
             <div className="rounded-xl border border-orange-100 p-4">
               <p className="text-sm">Para ubicar tu emprendimiento en MORFI, permití el acceso a tu ubicación GPS.</p>
@@ -1054,24 +1247,21 @@ export default function Business() {
                 <img
                   src={businessLogoPreview}
                   alt="Vista previa del logo del emprendimiento"
-                  className="mt-3 h-24 w-24 rounded-xl border bg-white object-contain p-1"
+                  className="mt-3 h-24 w-24 rounded-full border bg-white object-contain p-1"
                 />
               )}
             </div>
             <fieldset className="rounded-xl border border-orange-100 p-4">
               <legend className="px-1 text-sm font-bold">Medios de pago</legend>
-              <div className="grid gap-2">
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={acceptsCash} onChange={event => setAcceptsCash(event.target.checked)} />
-                  Acepto efectivo
-                </label>
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={acceptsTransfer} onChange={event => setAcceptsTransfer(event.target.checked)} />
-                  Acepto transferencias
-                </label>
-              </div>
-              {acceptsTransfer && (
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="mt-2 flex items-center gap-2 text-sm font-semibold">
+                <input type="checkbox" checked={acceptsCash} onChange={event => setAcceptsCash(event.target.checked)} />
+                Acepto efectivo
+              </label>
+              <label className="mt-2 flex items-center gap-2 text-sm font-semibold">
+                <input type="checkbox" checked={acceptsTransfer} onChange={event => setAcceptsTransfer(event.target.checked)} />
+                Acepto transferencias
+              </label>
+              {acceptsTransfer && <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <label className="text-sm font-semibold">
                     Banco o billetera
                     <select value={bankName} onChange={event => setBankName(event.target.value)} required className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal">
@@ -1098,9 +1288,7 @@ export default function Business() {
                     CUIT (11 números)
                     <input inputMode="numeric" value={bankCuit} onChange={event => setBankCuit(event.target.value)} maxLength={13} required className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal" />
                   </label>
-                </div>
-              )}
-              {!acceptsCash && !acceptsTransfer && <p role="alert" className="mt-3 text-xs text-red-700">Elegí al menos un medio de pago.</p>}
+              </div>}
             </fieldset>
             <div>
               <button
@@ -1245,7 +1433,7 @@ export default function Business() {
                       setProductPhoto('');
                       setIsAvailable(true);
                       setAcceptsDelivery(false);
-                      setPaymentMethods(['cash']);
+                      setProductPaymentMethods(['cash', 'transfer']);
                       setCashDiscountPercent('');
                     }}
                     className="underline"
@@ -1355,33 +1543,34 @@ export default function Business() {
                   Acepta delivery
                 </label>
                 <fieldset className="rounded-xl border border-orange-100 p-3">
-                  <legend className="px-1 text-sm font-semibold">Medios de pago</legend>
-                  {(['cash', 'transfer'] as const).map(method => (
-                    <label key={method} className="mr-4 inline-flex items-center gap-2 text-sm">
+                  <legend className="px-1 text-sm font-semibold">Medios de pago para este producto</legend>
+                  <div className="flex flex-wrap gap-4">
+                    <label className="flex items-center gap-2 text-sm font-normal">
                       <input
                         type="checkbox"
-                        checked={paymentMethods.includes(method)}
-                        onChange={event => setPaymentMethods(current => event.target.checked
-                          ? [...current, method]
-                          : current.filter(value => value !== method))}
+                        checked={productPaymentMethods.includes('cash')}
+                        onChange={event => setProductPaymentMethods(current =>
+                          event.target.checked
+                            ? [...current, 'cash']
+                            : current.filter(method => method !== 'cash')
+                        )}
                       />
-                      {method === 'cash' ? 'Efectivo' : 'Transferencia'}
+                      Efectivo
                     </label>
-                  ))}
+                    <label className="flex items-center gap-2 text-sm font-normal">
+                      <input
+                        type="checkbox"
+                        checked={productPaymentMethods.includes('transfer')}
+                        onChange={event => setProductPaymentMethods(current =>
+                          event.target.checked
+                            ? [...current, 'transfer']
+                            : current.filter(method => method !== 'transfer')
+                        )}
+                      />
+                      Transferencia
+                    </label>
+                  </div>
                 </fieldset>
-                <label className="text-sm font-semibold">
-                  Descuento por efectivo (opcional, %)
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={cashDiscountPercent}
-                    onChange={event => setCashDiscountPercent(event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
-                    placeholder="0 a 100"
-                  />
-                </label>
               </div>
 
               <div className="mt-4">
@@ -1562,8 +1751,9 @@ export default function Business() {
                       <p className="text-sm text-gray-500">{product.category ?? 'Producto'}{product.quantity !== undefined ? ` · Stock registrado: ${product.quantity}` : ''}</p>
                       <p className="text-sm text-gray-500">
                         {product.acceptsDelivery ? 'Acepta delivery' : 'Sin delivery'} ·
-                        {' '}{(product.paymentMethods ?? []).map(method => method === 'cash' ? 'Efectivo' : 'Transferencia').join(', ')}
-                        {product.cashDiscountPercent != null ? ` · ${product.cashDiscountPercent}% de descuento en efectivo` : ''}
+                        {' '}{product.paymentMethods?.includes('transfer')
+                          ? 'Transferencia'
+                          : 'Actualizá el producto para aceptar transferencia'}
                       </p>
                       <p className="text-gray-600">{money(product.price)}</p>
                       {product.sellerAlias && <p className="mt-2 text-sm"><strong>Alias para transferir:</strong> {product.sellerAlias}{product.sellerHolder ? ` · ${product.sellerHolder}` : ''}</p>}
@@ -1641,20 +1831,82 @@ export default function Business() {
                   className="border border-gray-200 rounded-xl p-4 flex flex-wrap justify-between gap-4"
                 >
                   <div>
-                    <p className="font-black">Pedido #{order.id.slice(0, 8)}</p>
+                    <p className="font-black">Pedido #{order.order_number ?? order.id.slice(0, 8)}</p>
                     <p>{order.customer_name || 'Cliente MORFI'}</p>
                     {order.customer_phone && <p className="text-sm text-gray-600">WhatsApp: {order.customer_phone}</p>}
+                    {order.customer_phone && (
+                      <a
+                        href={`https://wa.me/${order.customer_phone.replace(/\D/g, '').replace(/^0/, '').replace(/^15/, '').replace(/^([^5])/, '54$1')}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 inline-block rounded-lg bg-green-700 px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Contactar por WhatsApp
+                      </a>
+                    )}
                     <ul className="mt-2 text-sm text-gray-600">
                       {order.items.map((item, index) => (
-                        <li key={`${order.id}-${index}`}>{item.quantity} × {item.product_name} · {money(item.line_total)}</li>
+                        <li key={`${order.id}-${index}`}>
+                          {item.quantity} × {item.product_name} · {money(item.line_total)}
+                          {item.customer_notes && <p className="ml-3 text-gray-700">Observación: {item.customer_notes}</p>}
+                        </li>
                       ))}
                     </ul>
-                    <p className="font-bold mt-2">{money(order.total)}</p>
+                    {order.customer_notes && <p className="mt-2 text-sm"><strong>Observaciones del pedido:</strong> {order.customer_notes}</p>}
+                    <p className="mt-2 text-sm">Subtotal: {money(order.subtotal)}{order.discount_total > 0 ? ` · Descuento: ${money(order.discount_total)}` : ''}</p>
+                    <p className="mt-1 text-sm font-bold">
+                      {order.total === null ? 'Total pendiente de cotización' : `Total: ${money(order.total)}`}
+                    </p>
                     <p className="mt-1 text-xs text-gray-500">
                       {new Date(order.created_at).toLocaleString('es-AR')} · {order.delivery_mode === 'pickup' ? 'Retiro en el local' : `Entrega: ${order.delivery_address ?? ''}`} · {order.payment_method === 'cash' ? 'Efectivo' : 'Transferencia'}
                     </p>
+                    {order.delivery_mode === 'delivery' && (
+                      <p className="mt-1 text-sm">
+                        {deliveryFeeStatusLabel(order.delivery_fee_status)}
+                        {order.delivery_fee !== null && ` · ${money(order.delivery_fee)}`}
+                        {order.delivery_references && ` · Referencias: ${order.delivery_references}`}
+                      </p>
+                    )}
+                    <p className="mt-1 text-sm font-semibold">Estado del pago: {paymentStatusLabel(order.payment_status, order.delivery_fee_status)}</p>
+                    {order.payment_method === 'transfer' && (order.transfer_bank || order.transfer_alias || order.transfer_holder) && (
+                      <p className="mt-1 text-sm">
+                        Datos de transferencia: {order.transfer_bank || 'Banco no informado'} · Alias: {order.transfer_alias || 'No informado'} · Titular: {order.transfer_holder || 'No informado'}
+                      </p>
+                    )}
                     <p className="mt-2 text-sm font-bold">{orderStatusLabel(order.status, order.delivery_mode)}</p>
                     {order.status_reason && <p className="mt-1 text-sm text-gray-600">Motivo: {order.status_reason}</p>}
+                    {isOrderCheckoutV2Enabled && order.delivery_mode === 'delivery' && order.delivery_fee_status === 'pending' && (
+                      <button
+                        type="button"
+                        onClick={() => void setDeliveryQuote(order)}
+                        disabled={orderStatusBusyId === order.id}
+                        className="mt-3 rounded-lg bg-[#F6A623] px-3 py-2 text-sm font-bold text-[#8B3F14] disabled:opacity-50"
+                      >
+                        Registrar costo acordado (0 si es gratis)
+                      </button>
+                    )}
+                    {order.payment_method === 'transfer' &&
+                      ['pending_payment', 'pending_verification'].includes(order.payment_status ?? '') &&
+                      order.delivery_fee_status !== 'pending' && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void reviewTransfer(order, true)}
+                          disabled={orderStatusBusyId === order.id}
+                          className="rounded-lg bg-green-700 px-3 py-2 text-sm font-bold text-white disabled:opacity-50"
+                        >
+                          Verifiqué manualmente la transferencia
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void reviewTransfer(order, false)}
+                          disabled={orderStatusBusyId === order.id}
+                          className="rounded-lg border border-red-300 px-3 py-2 text-sm font-bold text-red-700 disabled:opacity-50"
+                        >
+                          Rechazar transferencia
+                        </button>
+                      </div>
+                    )}
                     {order.history.length > 0 && (
                       <details className="mt-3 text-sm">
                         <summary className="cursor-pointer font-semibold">Historial del pedido</summary>

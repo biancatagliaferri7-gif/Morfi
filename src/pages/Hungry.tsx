@@ -5,10 +5,15 @@ import { listPublishedBusinessCatalog } from '../business/publicCatalogService';
 import type { PublicBusinessCatalog } from '../business/publicCatalogService';
 import { listBusinessReviews } from '../business/reviewService';
 import type { PublicReview } from '../business/reviewService';
+import BusinessLocationMap from '../components/BusinessLocationMap';
 import {
   createMealOrder,
+  getWhatsAppOrderDetails,
+  deliveryFeeStatusLabel,
+  isOrderCheckoutV2Enabled,
   listCustomerMealOrders,
   orderStatusLabel,
+  paymentStatusLabel,
   subscribeToMealOrders,
   updateMealOrderStatus,
 } from '../orders/orderService';
@@ -25,6 +30,7 @@ type Dish = {
   saleUnit?: string;
   acceptsDelivery?: boolean;
   cashDiscountPercent?: number | null;
+  paymentMethods?: ('cash' | 'transfer')[];
   averageRating?: number | null;
   reviewCount?: number;
   image: string;
@@ -43,13 +49,12 @@ type Shop = {
   acceptsPickup: boolean;
   phone?: string;
   alias?: string | null;
-  holder?: string | null;
   location?: string | null;
   directions?: string | null;
   latitude?: number | null;
   longitude?: number | null;
-  deliveryFee: number;
-  paymentMethods: ('cash' | 'transfer')[];
+  deliveryFee: number | null;
+  deliveryFeeStatus: 'pending' | 'free' | 'fixed' | null;
   averageRating: number | null;
   reviewCount: number;
 };
@@ -75,6 +80,8 @@ function mapPublicCatalog(catalog: PublicBusinessCatalog[]): Shop[] {
       name: product.name,
       description: product.description,
       price: Number(product.price),
+      acceptsDelivery: product.accepts_delivery,
+      paymentMethods: product.payment_methods,
       averageRating: product.average_rating,
       reviewCount: product.review_count,
       image: product.image_path || '/morfi-emprendimiento.png',
@@ -93,13 +100,14 @@ function mapPublicCatalog(catalog: PublicBusinessCatalog[]): Shop[] {
       acceptsPickup: business.accepts_pickup,
       latitude: business.latitude,
       longitude: business.longitude,
-      deliveryFee: Number(business.delivery_fee),
-      paymentMethods: business.payment_methods,
+      deliveryFee: business.delivery_fee == null || Number(business.delivery_fee) <= 0
+        ? business.delivery_fee_status === 'free' ? 0 : null
+        : Number(business.delivery_fee),
+      deliveryFeeStatus: business.delivery_fee_status,
       averageRating: business.average_rating,
       reviewCount: business.review_count,
       phone: contact?.contact_phone ?? undefined,
       alias: contact?.transfer_alias ?? null,
-      holder: contact?.transfer_holder ?? null,
       location: contact?.location ?? null,
       directions: contact?.directions ?? null,
     };
@@ -109,18 +117,42 @@ function mapPublicCatalog(catalog: PublicBusinessCatalog[]): Shop[] {
 function readPendingOrder() {
   try {
     const saved = sessionStorage.getItem(pendingOrderKey);
-    return saved ? JSON.parse(saved) as { selectedId: string; selectedKind?: 'business' | 'supplier'; cart: Record<string, number>; delivery: 'pickup' | 'delivery'; address: string; method: 'cash' | 'transfer'; cash: string } : null;
+    return saved ? JSON.parse(saved) as {
+      selectedId: string;
+      selectedKind?: 'business' | 'supplier';
+      cart: Record<string, number>;
+      delivery: 'pickup' | 'delivery';
+      address: string;
+      references?: string;
+      productNotes?: Record<string, string>;
+      orderNotes?: string;
+      method?: 'cash' | 'transfer';
+      cash?: string;
+    } : null;
   } catch {
     return null;
   }
 }
 
 function whatsappUrl(phone: string, message: string) {
-  const digits = phone.replace(/\D/g, '');
-  const international = digits.startsWith('54')
-    ? digits
-    : `54${digits.replace(/^0/, '').replace(/^15/, '')}`;
+  let digits = phone.replace(/\D/g, '').replace(/^0/, '').replace(/^15/, '');
+  if (!digits.startsWith('54')) digits = `54${digits}`;
+  if (digits.length < 10 || digits.length > 15) return null;
+  const international = digits;
   return `https://wa.me/${international}?text=${encodeURIComponent(message)}`;
+}
+
+function normalizeCustomerPhone(phone: string) {
+  const trimmed = phone.trim();
+  const digits = trimmed.replace(/\D/g, '');
+  if (trimmed.startsWith('+') && /^\+[1-9][0-9]{7,14}$/.test(`+${digits}`)) {
+    return `+${digits}`;
+  }
+  if (digits.length === 10) return `+549${digits}`;
+  if (digits.length >= 8 && digits.length <= 15 && digits.startsWith('549')) {
+    return `+${digits}`;
+  }
+  return null;
 }
 
 function RatingDisplay({ average, count }: { average: number | null; count: number }) {
@@ -157,19 +189,29 @@ export default function Hungry() {
   );
   const [delivery, setDelivery] = useState<'pickup' | 'delivery'>(pendingDraft?.delivery ?? 'pickup');
   const [address, setAddress] = useState(pendingDraft?.address ?? '');
-  const [method, setMethod] = useState<'cash' | 'transfer'>(pendingDraft?.method ?? 'cash');
-  const [cash, setCash] = useState(pendingDraft?.cash ?? '');
+  const [deliveryReferences, setDeliveryReferences] = useState(pendingDraft?.references ?? '');
+  const [productNotes, setProductNotes] = useState<Record<string, string>>(pendingDraft?.productNotes ?? {});
+  const [orderNotes, setOrderNotes] = useState(pendingDraft?.orderNotes ?? '');
+  const method = 'transfer' as const;
+  const [customerPhoneInput, setCustomerPhoneInput] = useState('');
   const [customerOrders, setCustomerOrders] = useState<MealOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState('');
   const [orderBusy, setOrderBusy] = useState(false);
+  const orderBusyRef = useRef(false);
   const [customerOrderBusyId, setCustomerOrderBusyId] = useState<string | null>(null);
   const [ordersReload, setOrdersReload] = useState(0);
   const [orderRequestKey, setOrderRequestKey] = useState<string | null>(null);
+  const [confirmedOrder, setConfirmedOrder] = useState<{
+    orderLabel: string;
+    whatsappOrderUrl: string | null;
+    whatsappReceiptUrl: string | null;
+  } | null>(null);
   const [businessReviews, setBusinessReviews] = useState<PublicReview[]>([]);
   const [businessReviewsLoading, setBusinessReviewsLoading] = useState(false);
   const [businessReviewsError, setBusinessReviewsError] = useState('');
   const [notice, setNotice] = useState('');
+  const [aliasCopied, setAliasCopied] = useState(false);
   useEffect(() => {
     let active = true;
     async function loadCatalog() {
@@ -231,6 +273,9 @@ export default function Hungry() {
     };
   }, [profile?.id, ordersReload]);
   useEffect(() => {
+    setCustomerPhoneInput(profile?.phone ?? '');
+  }, [profile?.id, profile?.phone]);
+  useEffect(() => {
     let active = true;
     if (!selectedId || selectedKind !== 'business') {
       setBusinessReviews([]);
@@ -277,20 +322,58 @@ export default function Hungry() {
   }, [publishedShops, customerCoordinates]);
   const filtered = useMemo(() => shopsSortedByDistance.filter(s => (s.name + ' ' + s.category + ' ' + s.description + ' ' + s.dishes.map(d => d.name).join(' ')).toLocaleLowerCase('es').includes(search.toLocaleLowerCase('es'))), [shopsSortedByDistance, search]);
   const selected = selectedId ? publishedShops.find(s => s.id === selectedId) : undefined;
+  const shopContactUrl = selected?.phone
+    ? whatsappUrl(selected.phone, `Hola, quiero consultar por los productos de ${selected.name}`)
+    : null;
   const lines = selected?.dishes.filter(d => (cart[d.id] || 0) > 0) || [];
   const subtotal = lines.reduce((sum, d) => sum + d.price * (cart[d.id] || 0), 0);
-  const deliveryAllowed = selected?.kind === 'supplier'
-    ? lines.length > 0 && lines.every(d => d.acceptsDelivery)
-    : selected?.acceptsDelivery ?? false;
+  const supportsPickup = selected?.acceptsPickup ?? false;
+  const supportsDelivery = selected?.acceptsDelivery === true &&
+    (selected.kind === 'supplier' || (lines.length > 0 && lines.every(d => d.acceptsDelivery)));
+  const transferAvailable = selected?.kind === 'business' &&
+    lines.every(dish => dish.paymentMethods?.includes('transfer') ?? false);
+  const transferDetailsComplete = selected?.kind !== 'business' || Boolean(
+    selected.alias?.trim(),
+  );
+  const transferDetailsMissing = selected?.kind === 'business' && !transferDetailsComplete;
+  const businessWhatsappAvailable = selected?.kind === 'business' &&
+    Boolean(selected.phone?.trim() && whatsappUrl(selected.phone, '') !== null);
   const deliveryFee = selected?.kind === 'business' && delivery === 'delivery' && subtotal > 0
-    ? selected.deliveryFee
+    ? selected.deliveryFeeStatus === 'free'
+      ? 0
+      : selected.deliveryFeeStatus === 'pending'
+        ? null
+        : selected.deliveryFee
     : 0;
-  const total = subtotal + deliveryFee;
-  const cashValue = Number(cash);
-  const canOrder = subtotal > 0 &&
-    (delivery === 'pickup' ? selected?.acceptsPickup : deliveryAllowed && address.trim().length >= 5) &&
-    (selected?.kind === 'supplier' || selected?.paymentMethods.includes(method)) &&
-    (method === 'transfer' || (cash.trim() !== '' && Number.isFinite(cashValue) && cashValue >= total));
+  const total = deliveryFee === null ? null : subtotal + deliveryFee;
+  const canPlaceOrder = subtotal > 0 &&
+    (delivery === 'pickup' ? supportsPickup : supportsDelivery && address.trim().length >= 5) &&
+    transferAvailable &&
+    !transferDetailsMissing &&
+    (delivery !== 'delivery' || deliveryFee !== null || isOrderCheckoutV2Enabled) &&
+    businessWhatsappAvailable;
+  const normalizedCustomerPhone = normalizeCustomerPhone(customerPhoneInput);
+  const customerDetailsComplete = Boolean(profile?.full_name?.trim() && normalizedCustomerPhone);
+  const customerPhonePersistable = isOrderCheckoutV2Enabled ||
+    (normalizedCustomerPhone !== null &&
+      normalizedCustomerPhone === normalizeCustomerPhone(profile?.phone ?? ''));
+  const canOrder = canPlaceOrder &&
+    customerDetailsComplete &&
+    customerPhonePersistable &&
+    (isOrderCheckoutV2Enabled || (
+      !Object.values(productNotes).some(note => note.trim()) &&
+      !orderNotes.trim() &&
+      !deliveryReferences.trim()
+    ));
+  useEffect(() => {
+    if (delivery === 'delivery' && !supportsDelivery) {
+      if (supportsPickup) setDelivery('pickup');
+      setAddress('');
+      setDeliveryReferences('');
+    } else if (delivery === 'pickup' && !supportsPickup && supportsDelivery) {
+      setDelivery('delivery');
+    }
+  }, [delivery, supportsDelivery, supportsPickup]);
   const updateQty = (id: string, change: number) => {
     const dish = selected?.dishes.find(item => item.id === id);
     if (change > 0 && delivery === 'delivery' && selected?.kind === 'supplier' && !dish?.acceptsDelivery) {
@@ -299,6 +382,12 @@ export default function Hungry() {
       setNotice('El producto agregado no tiene delivery; cambiamos la modalidad a retiro.');
     }
     setOrderRequestKey(null);
+    setConfirmedOrder(null);
+    setProductNotes(current => {
+      if ((cart[id] || 0) + change > 0) return current;
+      const { [id]: _removed, ...remaining } = current;
+      return remaining;
+    });
     setCart(prev => ({ ...prev, [id]: Math.max(0, (prev[id] || 0) + change) }));
   };
   const choose = (id: string, kind: 'business' | 'supplier') => {
@@ -314,12 +403,15 @@ export default function Hungry() {
     setSelectedId(id);
     setSelectedKind(kind);
     setOrderRequestKey(null);
+    setConfirmedOrder(null);
     setCart({});
+    setProductNotes({});
+    setOrderNotes('');
     setNotice('');
-    setCash('');
-    setMethod('cash');
     setAddress('');
+    setDeliveryReferences('');
     setDelivery('pickup');
+    setAliasCopied(false);
   };
   function prioritizeNearbyBusinesses() {
     if (!navigator.geolocation) {
@@ -370,43 +462,167 @@ export default function Hungry() {
     }
   }
   const confirm = async () => {
-    if (!selected || selected.kind !== 'business' || !canOrder || orderBusy) return;
+    if (!selected || selected.kind !== 'business' || orderBusyRef.current) return;
     if (!session) {
       try {
-        sessionStorage.setItem(pendingOrderKey, JSON.stringify({ selectedId, selectedKind, cart, delivery, address, method, cash }));
+        sessionStorage.setItem(pendingOrderKey, JSON.stringify({
+          selectedId,
+          selectedKind,
+          cart,
+          delivery,
+          address,
+          references: deliveryReferences,
+          productNotes,
+          orderNotes,
+          method,
+        }));
         navigate('/login?next=%2Fhungry');
       } catch {
         setNotice('Iniciá sesión para continuar con tu pedido. No se pudo guardar el carrito temporalmente.');
       }
       return;
     }
+    if (!canOrder) {
+      if (!profile?.full_name?.trim() || !normalizedCustomerPhone) {
+        setNotice('Completá tu nombre y teléfono en tu perfil antes de confirmar el pedido.');
+      } else if (!customerPhonePersistable) {
+        setNotice('El teléfono ingresado se guardará cuando se active el checkout actualizado.');
+      } else if (!businessWhatsappAvailable) {
+        setNotice('Este emprendimiento no tiene un WhatsApp público válido para recibir pedidos.');
+      } else if (!transferDetailsComplete) {
+        setNotice('No se puede confirmar: falta el alias de transferencia del emprendimiento.');
+      }
+      return;
+    }
+    const customerPhone = normalizedCustomerPhone;
+    if (!customerPhone) {
+      setNotice('Completá el teléfono del cliente antes de confirmar.');
+      return;
+    }
     const requestKey = orderRequestKey ?? crypto.randomUUID();
     setOrderRequestKey(requestKey);
+    orderBusyRef.current = true;
     setOrderBusy(true);
     setNotice('');
+    setConfirmedOrder(null);
+    let savedOrderId: string | null = null;
+    let savedOrderNumber: number | null = null;
     try {
-      await createMealOrder({
+      const createdOrder = await createMealOrder({
         businessId: selected.id,
-        items: lines.map(dish => ({ productId: dish.id, quantity: cart[dish.id] })),
+        customerPhone,
+        items: lines.map(dish => ({
+          productId: dish.id,
+          quantity: cart[dish.id],
+          customerNotes: productNotes[dish.id]?.trim() || null,
+        })),
         deliveryMode: delivery,
         deliveryAddress: delivery === 'delivery' ? address.trim() : null,
+        deliveryReferences: delivery === 'delivery' ? deliveryReferences.trim() || null : null,
+        customerNotes: orderNotes.trim() || null,
         paymentMethod: method,
         requestKey,
       });
-      sessionStorage.removeItem(pendingOrderKey);
+      savedOrderId = createdOrder.id;
+      savedOrderNumber = createdOrder.orderNumber;
+      const persistedOrder = await getWhatsAppOrderDetails(createdOrder.id, {
+        alias: selected.alias ?? null,
+      });
+      const orderLabel = String(
+        persistedOrder.order_number ?? createdOrder.orderNumber ?? createdOrder.id.slice(0, 8),
+      );
+      const orderDetails = persistedOrder.items.map(item =>
+        `${item.quantity}, ${item.product_name}: ${money(item.line_total)}`,
+      ).join('\n');
+      const transferAlias = persistedOrder.transfer_alias?.trim();
+      if (!transferAlias) {
+        throw new Error('El pedido se registró, pero falta el alias público del emprendimiento.');
+      }
+      const orderMessage = [
+        '🍔 NUEVO PEDIDO DESDE MORFI',
+        '',
+        `👤 Cliente: ${persistedOrder.customer_name}`,
+        `📱 Teléfono: ${persistedOrder.customer_phone ?? customerPhone}`,
+        '',
+        '🛒 PRODUCTOS',
+        orderDetails,
+        '',
+        `🚚 Entrega: ${persistedOrder.delivery_mode === 'pickup' ? 'Retiro en el local' : 'Delivery'}`,
+        ...(persistedOrder.delivery_mode === 'delivery' ? [
+          `📍 Dirección: ${persistedOrder.delivery_address ?? ''}`,
+          `Costo de envío: ${persistedOrder.delivery_fee === null ? 'Pendiente de cotización' : money(persistedOrder.delivery_fee)}`,
+        ] : []),
+        '',
+        `💰 TOTAL: ${persistedOrder.total === null ? 'Total pendiente' : money(persistedOrder.total)}`,
+        '',
+        '🏦 PAGO POR TRANSFERENCIA',
+        `Alias: ${transferAlias}`,
+        '',
+        '📎 Enviaré el comprobante por este chat.',
+        '',
+        '⏳ Pedido pendiente de pago.',
+      ].join('\n');
+      const orderUrl = selected.phone ? whatsappUrl(selected.phone, orderMessage) : null;
+      if (!orderUrl) {
+        throw new Error('El pedido se registró, pero el WhatsApp público del emprendimiento no es válido.');
+      }
+      const receiptMessage = persistedOrder.total !== null
+        ? `Hola, envío el comprobante de transferencia del pedido #${orderLabel} de ${selected.name} por ${money(persistedOrder.total)}.`
+        : null;
+      try {
+        sessionStorage.removeItem(pendingOrderKey);
+      } catch (error) {
+        console.warn('No se pudo limpiar el carrito temporal después de confirmar:', error);
+      }
       setCart({});
-      setCash('');
+      setProductNotes({});
+      setOrderNotes('');
       setAddress('');
+      setDeliveryReferences('');
       setOrderRequestKey(null);
       setOrdersReload(current => current + 1);
-      setNotice('El pedido se guardó en MORFI y ya está disponible para el emprendimiento.');
+      setConfirmedOrder({
+        orderLabel,
+        whatsappOrderUrl: orderUrl,
+        whatsappReceiptUrl: receiptMessage ? whatsappUrl(selected.phone!, receiptMessage) : null,
+      });
+      let whatsappOpened = false;
+      try {
+        const whatsappWindow = window.open(orderUrl, '_blank');
+        whatsappOpened = whatsappWindow !== null;
+        if (whatsappWindow) whatsappWindow.opener = null;
+      } catch (error) {
+        console.warn('No se pudo abrir WhatsApp después de registrar el pedido:', error);
+      }
+      setNotice(whatsappOpened
+        ? `El pedido #${orderLabel} quedó registrado. Revisá el mensaje y presioná Enviar en WhatsApp.`
+        : `El pedido #${orderLabel} quedó registrado. Si WhatsApp no se abrió, usá el botón para reintentar sin crear otro pedido.`);
     } catch (error) {
-      const detail = error instanceof Error ? error.message : 'Error inesperado.';
-      setNotice(`No se pudo confirmar el pedido: ${detail}`);
+      if (savedOrderId) {
+        setNotice(
+          `El pedido #${savedOrderNumber ?? savedOrderId.slice(0, 8)} quedó registrado, pero no se pudo preparar WhatsApp. Reintentá sin cambiar el carrito para reutilizar el mismo pedido.`,
+        );
+      } else {
+        const detail = error instanceof Error ? error.message : 'Error inesperado.';
+        setNotice(`No se pudo confirmar el pedido: ${detail}`);
+      }
     } finally {
+      orderBusyRef.current = false;
       setOrderBusy(false);
     }
   };
+  async function copyTransferAlias() {
+    if (!selected?.alias) return;
+    try {
+      await navigator.clipboard.writeText(selected.alias);
+      setAliasCopied(true);
+      setNotice('Alias copiado.');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setAliasCopied(false);
+      setNotice(`No se pudo copiar el alias: ${detail}`);
+    }
+  }
   return (
     <div className="min-h-screen bg-[#FFF3E5] px-4 py-8 text-[#8B3F14]">
       <div className="mx-auto max-w-6xl">
@@ -518,11 +734,14 @@ export default function Hungry() {
             <h2 className="mb-2 text-2xl font-black">{selected.name}</h2>
             <RatingDisplay average={selected.averageRating} count={selected.reviewCount} />
             <p className="mb-6 text-gray-600">{selected.description}</p>
-            {(selected.phone || selected.alias || selected.location) && (
+            {(selected.phone || selected.location ||
+              (selected.latitude != null && selected.longitude != null)) && (
               <div className="mb-5 rounded-xl bg-white p-4 shadow-sm">
-                {selected.alias && <p><strong>Alias para transferir:</strong> {selected.alias}{selected.holder ? ` · ${selected.holder}` : ''}</p>}
                 {selected.location && <p className="mt-1"><strong>Local:</strong> {selected.location}{selected.directions ? ` · ${selected.directions}` : ''}</p>}
-                {selected.phone && <a href={whatsappUrl(selected.phone, `Hola, quiero consultar por los productos de ${selected.name}`)} target="_blank" rel="noreferrer" className="mt-3 inline-flex rounded-lg bg-green-700 px-4 py-2 text-sm font-bold text-white">Contactar por WhatsApp</a>}
+                {selected.kind === 'business' && selected.latitude != null && selected.longitude != null && (
+                  <BusinessLocationMap latitude={selected.latitude} longitude={selected.longitude} />
+                )}
+                {shopContactUrl && <a href={shopContactUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex rounded-lg bg-green-700 px-4 py-2 text-sm font-bold text-white">Contactar por WhatsApp</a>}
               </div>
             )}
             {selected.kind === 'business' && (
@@ -564,9 +783,6 @@ export default function Hungry() {
                         {d.promotionTitle && <p className="mt-1 text-xs font-bold text-green-800">{d.promotionTitle}</p>}
                         <p className="mt-2 font-bold">{money(d.price)}{d.saleUnit ? ` / ${d.saleUnit}` : ''}</p>
                         {d.originalPrice && <p className="text-sm text-gray-500 line-through">{money(d.originalPrice)}</p>}
-                        {d.cashDiscountPercent !== null && d.cashDiscountPercent !== undefined && d.cashDiscountPercent > 0 && (
-                          <p className="mt-1 text-xs text-gray-600">{d.cashDiscountPercent}% de descuento en efectivo</p>
-                        )}
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -584,7 +800,34 @@ export default function Hungry() {
               </section>
               <section className="h-fit rounded-2xl bg-white p-5 shadow-sm" aria-label="Carrito">
                 <h3 className="mb-4 text-xl font-black">Tu carrito</h3>
-                {lines.length === 0 ? <p className="text-gray-600">Agregá un producto para comenzar.</p> : lines.map(d => <p key={d.id} className="mb-2 flex justify-between gap-2 text-sm"><span>{cart[d.id]} × {d.name}{d.saleUnit ? ` (${d.saleUnit})` : ''}</span><strong>{money(cart[d.id] * d.price)}</strong></p>)}
+                {lines.length === 0 ? <p className="text-gray-600">Agregá un producto para comenzar.</p> : lines.map(d => (
+                  <div key={d.id} className="mb-4 border-b border-orange-100 pb-3 last:border-0">
+                    <p className="flex justify-between gap-2 text-sm">
+                      <span>{cart[d.id]} × {d.name}{d.saleUnit ? ` (${d.saleUnit})` : ''}</span>
+                      <strong>{money(cart[d.id] * d.price)}</strong>
+                    </p>
+                    <label htmlFor={`product-note-${d.id}`} className="mt-2 block text-sm font-semibold">Observaciones para {d.name}</label>
+                    <textarea
+                      id={`product-note-${d.id}`}
+                      value={productNotes[d.id] ?? ''}
+                      onChange={event => setProductNotes(current => ({ ...current, [d.id]: event.target.value }))}
+                      maxLength={500}
+                      placeholder="Ej.: sin cebolla, sin tomate, salsa aparte"
+                      className="mt-1 w-full rounded-lg border border-orange-200 p-3 text-sm"
+                      rows={2}
+                    />
+                  </div>
+                ))}
+                <label htmlFor="order-notes" className="mt-2 block font-semibold">Observaciones generales</label>
+                <textarea
+                  id="order-notes"
+                  value={orderNotes}
+                  onChange={event => setOrderNotes(event.target.value)}
+                  maxLength={1000}
+                  placeholder="Indicaciones para todo el pedido"
+                  className="mt-1 w-full rounded-lg border border-orange-200 p-3 text-sm"
+                  rows={2}
+                />
                 <div className="my-4 border-t pt-3">
                   {selected.kind === 'supplier' && (
                     <p className="mb-3 rounded-lg bg-amber-50 p-3 text-xs text-amber-900">
@@ -592,31 +835,203 @@ export default function Hungry() {
                     </p>
                   )}
                   <p className="flex justify-between"><span>Subtotal</span><strong>{money(subtotal)}</strong></p>
-                  <p className="mt-1 flex justify-between"><span>{selected.kind === 'supplier' ? 'Envío (demo)' : 'Envío'}</span><strong>{money(deliveryFee)}</strong></p>
-                  <p className="mt-2 flex justify-between text-lg font-black"><span>Total</span><span>{money(total)}</span></p>
+                  <p className="mt-1 flex justify-between">
+                    <span>{selected.kind === 'supplier' ? 'Envío (demo)' : 'Envío'}</span>
+                    <strong>{delivery === 'delivery' && deliveryFee === null ? 'Envío a confirmar' : money(deliveryFee ?? 0)}</strong>
+                  </p>
+                  <p className="mt-2 flex justify-between text-lg font-black">
+                    <span>{total === null ? 'Total pendiente de cotización' : 'Total'}</span><span>{total === null ? 'A confirmar' : money(total)}</span>
+                  </p>
                 </div>
-                <label className="mb-1 block font-semibold">Modalidad</label>
-                <select value={delivery} onChange={e => setDelivery(e.target.value as 'pickup' | 'delivery')} className="mb-3 w-full rounded-lg border p-3">
-                  <option value="pickup" disabled={!selected.acceptsPickup}>Retiro en el local</option>
-                  <option value="delivery" disabled={!deliveryAllowed}>
-                    {selected.kind === 'supplier' ? 'Entrega (demo, costo no calculado)' : `Entrega a domicilio (+ ${money(selected.deliveryFee)})`}
-                    {!deliveryAllowed ? ' · no disponible para todo el carrito' : ''}
-                  </option>
-                </select>
-                {delivery === 'delivery' && <input aria-label="Dirección de entrega" value={address} onChange={e => setAddress(e.target.value)} placeholder={selected.kind === 'supplier' ? 'Dirección de entrega (demo)' : 'Dirección de entrega'} className="mb-3 w-full rounded-lg border p-3" />}
-                <label className="mb-1 block font-semibold">{selected.kind === 'supplier' ? 'Pago de demostración' : 'Medio de pago'}</label>
-                <select value={method} onChange={e => setMethod(e.target.value as 'cash' | 'transfer')} className="mb-3 w-full rounded-lg border p-3">
-                  <option value="cash">Efectivo</option>
-                  <option value="transfer" disabled={selected.kind === 'business' && !selected.paymentMethods.includes('transfer')}>
-                    {selected.kind === 'supplier' ? 'Transferencia simulada' : 'Transferencia'}
-                  </option>
-                </select>
-                {method === 'cash' && <><input aria-label="Monto con el que pagás" type="number" min="0" value={cash} onChange={e => setCash(e.target.value)} placeholder="¿Con cuánto pagás?" className="w-full rounded-lg border p-3" />{cash !== '' && cashValue >= total && subtotal > 0 && <p className="mt-2 text-sm">Vuelto: <strong>{money(cashValue - total)}</strong></p>}</>}
-                <button disabled={!canOrder || orderBusy} onClick={() => void confirm()} className="mt-4 w-full rounded-xl bg-[#8B3F14] p-3 font-bold text-white disabled:cursor-not-allowed disabled:opacity-40">
-                  {!session ? 'Iniciar sesión para confirmar' : orderBusy ? 'Guardando pedido…' : selected.kind === 'business' ? 'Confirmar pedido' : 'Registrar pedido de demostración'}
+                {session && selected.kind === 'business' && (
+                  <label className="mb-3 block text-sm font-semibold">
+                    Tu teléfono
+                    <input
+                      type="tel"
+                      autoComplete="tel"
+                      value={customerPhoneInput}
+                      onChange={event => setCustomerPhoneInput(event.target.value)}
+                      placeholder="+5492611234567"
+                      className="mt-1 w-full rounded-lg border p-3 font-normal"
+                      required
+                    />
+                    <span className="mt-1 block text-xs font-normal text-gray-600">
+                      Se incluirá en el pedido para que el emprendimiento pueda contactarte.
+                    </span>
+                  </label>
+                )}
+                <label className="mb-1 block font-semibold">Modalidad de entrega</label>
+                {supportsPickup && supportsDelivery ? (
+                  <select
+                    value={delivery}
+                    onChange={event => {
+                      const nextDelivery = event.target.value as 'pickup' | 'delivery';
+                      setDelivery(nextDelivery);
+                      if (nextDelivery === 'pickup') {
+                        setAddress('');
+                        setDeliveryReferences('');
+                      }
+                    }}
+                    className="mb-3 w-full rounded-lg border p-3"
+                  >
+                    <option value="pickup">Retiro en el local</option>
+                    <option value="delivery">Delivery</option>
+                  </select>
+                ) : (
+                  <p className="mb-3 rounded-lg bg-orange-50 p-3 text-sm font-semibold">
+                    {supportsPickup ? 'Retiro en el local' : supportsDelivery ? 'Delivery' : 'Este emprendimiento no ofrece una modalidad disponible para los productos del carrito.'}
+                  </p>
+                )}
+                {delivery === 'delivery' && supportsDelivery && (
+                  <div className="mb-3 space-y-3">
+                    <label className="block text-sm font-semibold">
+                      Dirección de entrega
+                      <input
+                        aria-label="Dirección de entrega"
+                        value={address}
+                        onChange={event => setAddress(event.target.value)}
+                        placeholder="Calle, número, localidad"
+                        className="mt-1 w-full rounded-lg border p-3 font-normal"
+                      />
+                    </label>
+                    <label className="block text-sm font-semibold">
+                      Referencias (opcional)
+                      <textarea
+                        value={deliveryReferences}
+                        onChange={event => setDeliveryReferences(event.target.value)}
+                        maxLength={300}
+                        placeholder="Piso, departamento, entre calles, indicaciones"
+                        className="mt-1 w-full rounded-lg border p-3 font-normal"
+                        rows={2}
+                      />
+                    </label>
+                    {selected.kind === 'business' && selected.deliveryFee === null && (
+                      <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                        Envío a confirmar con el emprendimiento. Podés registrar el pedido ahora.
+                        {' No transfieras hasta conocer el costo de envío y el total definitivo.'}
+                      </p>
+                    )}
+                  </div>
+                )}
+                <p className="mb-3 font-semibold">Medio de pago: Transferencia bancaria</p>
+                {lines.length > 0 && selected.kind === 'business' && (
+                  <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm">
+                    <h4 className="font-bold">Datos para transferir</h4>
+                    <p className="mt-2"><strong>{total === null ? 'Total pendiente:' : 'Total:'}</strong> {total === null ? 'A confirmar por el costo de envío' : money(total)}</p>
+                    <p className="mt-1"><strong>Alias:</strong> {selected.alias || 'No disponible'}</p>
+                    {selected.alias && (
+                      <button
+                        type="button"
+                        onClick={() => void copyTransferAlias()}
+                        className="mt-2 rounded-lg border border-orange-300 px-3 py-2 font-bold text-[#8B3F14]"
+                      >
+                        {aliasCopied ? 'Alias copiado' : 'Copiar alias'}
+                      </button>
+                    )}
+                    <p className="mt-2 text-xs text-gray-700">
+                      {total === null
+                        ? 'No transfieras todavía. El emprendimiento debe confirmar el costo de envío y el total definitivo.'
+                        : 'El pago queda pendiente hasta que envíes el comprobante al emprendimiento.'}
+                    </p>
+                  </div>
+                )}
+                {lines.length > 0 && (
+                  <section className="mt-4 rounded-xl border border-orange-200 bg-orange-50 p-4" aria-label="Resumen del pedido">
+                    <h4 className="font-black">Resumen del pedido</h4>
+                    <ul className="mt-2 space-y-2 text-sm">
+                      {lines.map(dish => (
+                        <li key={`summary-${dish.id}`}>
+                          <div className="flex justify-between gap-2">
+                            <span>{cart[dish.id]} × {dish.name} · {money(dish.price)} c/u</span>
+                            <strong>{money(cart[dish.id] * dish.price)}</strong>
+                          </div>
+                          {productNotes[dish.id]?.trim() && <p className="mt-1 text-gray-700">Observación: {productNotes[dish.id].trim()}</p>}
+                        </li>
+                      ))}
+                    </ul>
+                    {orderNotes.trim() && <p className="mt-2 text-sm"><strong>Observaciones generales:</strong> {orderNotes.trim()}</p>}
+                    <p className="mt-2 text-sm"><strong>Entrega:</strong> {delivery === 'pickup' ? 'Retiro en el local' : `Delivery · ${address.trim() || 'Dirección pendiente'}`}</p>
+                    {delivery === 'delivery' && deliveryReferences.trim() && <p className="mt-1 text-sm"><strong>Referencias:</strong> {deliveryReferences.trim()}</p>}
+                    <p className="mt-1 text-sm"><strong>Pago:</strong> Transferencia bancaria</p>
+                    <div className="mt-3 space-y-1 border-t border-orange-200 pt-2 text-sm">
+                      <p className="flex justify-between"><span>Subtotal</span><strong>{money(subtotal)}</strong></p>
+                      <p className="flex justify-between"><span>Costo de envío</span><strong>{delivery === 'delivery' && deliveryFee === null ? 'Envío a confirmar' : money(deliveryFee ?? 0)}</strong></p>
+                      <p className="flex justify-between text-base font-black"><span>{total === null ? 'Total pendiente de cotización' : 'Total'}</span><span>{total === null ? 'A confirmar' : money(total)}</span></p>
+                    </div>
+                  </section>
+                )}
+                {!isOrderCheckoutV2Enabled && (Object.values(productNotes).some(note => note.trim()) || orderNotes.trim() || deliveryReferences.trim()) && (
+                  <p role="status" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                    Para guardar observaciones y referencias, el sistema de checkout actualizado debe estar habilitado después de aplicar las migraciones.
+                  </p>
+                )}
+                {isOrderCheckoutV2Enabled && (Object.values(productNotes).some(note => note.trim()) || orderNotes.trim() || deliveryReferences.trim()) && (
+                  <p className="mt-3 rounded-lg bg-green-50 p-3 text-sm text-green-900">
+                    Las observaciones y referencias se guardarán junto con el pedido.
+                  </p>
+                )}
+                {selected.kind === 'business' && !transferAvailable && lines.length > 0 && (
+                  <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">
+                    El emprendimiento y todos los productos deben aceptar transferencia bancaria.
+                  </p>
+                )}
+                {transferDetailsMissing && (
+                  <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                    No se puede confirmar una transferencia hasta que el emprendimiento configure su alias.
+                  </p>
+                )}
+                {selected.kind === 'business' && !businessWhatsappAvailable && lines.length > 0 && (
+                  <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                    No se puede registrar el pedido sin un WhatsApp público válido del emprendimiento.
+                  </p>
+                )}
+                {session && !customerDetailsComplete && lines.length > 0 && (
+                  <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                    Completá tu nombre en el perfil e ingresá un teléfono válido antes de confirmar.
+                  </p>
+                )}
+                {session && customerDetailsComplete && !customerPhonePersistable && lines.length > 0 && (
+                  <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                    El checkout actualizado debe estar activo para guardar este teléfono junto con el pedido.
+                  </p>
+                )}
+                <button disabled={orderBusy || (session ? !canOrder : !canPlaceOrder)} onClick={() => void confirm()} className="mt-4 min-h-14 w-full rounded-xl bg-[#8B3F14] p-4 text-lg font-black text-white disabled:cursor-not-allowed disabled:opacity-40">
+                  {!session ? 'Iniciar sesión para continuar' : orderBusy ? 'Registrando pedido…' : 'Confirmar pedido por WhatsApp'}
                 </button>
                 {ordersError && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm font-semibold text-red-800">{ordersError}</p>}
                 {notice && <p role="status" className="mt-3 rounded-lg bg-green-100 p-3 text-sm font-semibold">{notice}</p>}
+                {confirmedOrder && (
+                  <section className="mt-4 rounded-xl border border-orange-200 bg-orange-50 p-4" aria-label="Pedido confirmado">
+                    <h4 className="font-black">Pedido #{confirmedOrder.orderLabel} confirmado</h4>
+                    <p className="mt-1 text-sm">
+                      El pedido ya está registrado en MORFI. WhatsApp no lo envía automáticamente: revisá el mensaje y presioná Enviar.
+                    </p>
+                    {confirmedOrder.whatsappOrderUrl ? (
+                      <a
+                        href={confirmedOrder.whatsappOrderUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-3 inline-flex min-h-14 w-full items-center justify-center rounded-xl bg-green-700 px-4 py-4 text-center text-lg font-black text-white"
+                      >
+                        Enviar pedido por WhatsApp
+                      </a>
+                    ) : (
+                      <p role="status" className="mt-3 rounded-lg bg-white p-3 text-sm text-amber-900">
+                        El pedido quedó confirmado, pero este emprendimiento no tiene un WhatsApp público disponible.
+                      </p>
+                    )}
+                    {confirmedOrder.whatsappReceiptUrl && (
+                      <a
+                        href={confirmedOrder.whatsappReceiptUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-2 inline-flex min-h-12 w-full items-center justify-center rounded-xl border border-green-800 bg-white px-4 py-3 text-center font-bold text-green-800"
+                      >
+                        Enviar comprobante de transferencia
+                      </a>
+                    )}
+                  </section>
+                )}
               </section>
             </div>
           </>
@@ -633,8 +1048,26 @@ export default function Hungry() {
           )}
           {customerOrders.map(order => (
             <div key={order.id} className="mt-3 rounded-xl border p-3">
-              <div className="flex flex-wrap justify-between gap-2"><strong>{order.business_name} · Pedido #{order.id.slice(0, 8)}</strong><span className="font-bold">{money(order.total)}</span></div>
+              <div className="flex flex-wrap justify-between gap-2"><strong>{order.business_name} · Pedido #{order.order_number ?? order.id.slice(0, 8)}</strong><span className="font-bold">{order.total === null ? 'Total pendiente de cotización' : money(order.total)}</span></div>
               <p className="mt-1 text-sm text-gray-600">{new Date(order.created_at).toLocaleString('es-AR')} · {order.delivery_mode === 'pickup' ? 'Retiro en el local' : `Entrega: ${order.delivery_address ?? ''}`} · {order.payment_method === 'cash' ? 'Efectivo' : 'Transferencia'}</p>
+              {order.delivery_mode === 'delivery' && (
+                <p className="mt-1 text-sm">{deliveryFeeStatusLabel(order.delivery_fee_status)}
+                  {order.delivery_references && ` · Referencias: ${order.delivery_references}`}
+                  {order.delivery_fee !== null && ` · ${money(order.delivery_fee)}`}
+                </p>
+              )}
+              {order.customer_notes && <p className="mt-1 text-sm"><strong>Observaciones del pedido:</strong> {order.customer_notes}</p>}
+              <p className="mt-1 text-sm font-semibold">Pago: {paymentStatusLabel(order.payment_status, order.delivery_fee_status)}</p>
+              {order.payment_method === 'transfer' && order.transfer_alias && (
+                <div className="mt-1 rounded-lg bg-orange-50 p-3 text-sm">
+                  <p>Alias de transferencia: {order.transfer_alias}</p>
+                  {order.total === null
+                    ? <p className="mt-1 font-semibold">No transfieras hasta que el emprendimiento confirme el costo de envío y el total definitivo.</p>
+                    : order.payment_status === 'pending_payment' || order.payment_status === 'pending_verification'
+                    ? <p className="mt-1 font-semibold">Total definitivo: {money(order.total)}. Ya podés transferir y enviar el comprobante al emprendimiento.</p>
+                      : null}
+                </div>
+              )}
               <p className="mt-2 font-bold">{orderStatusLabel(order.status, order.delivery_mode)}</p>
               {order.status_reason && <p className="mt-1 text-sm text-gray-600">Motivo: {order.status_reason}</p>}
               {['pending', 'accepted', 'preparing', 'ready'].includes(order.status) && (
@@ -648,7 +1081,7 @@ export default function Hungry() {
                 </button>
               )}
               <ul className="mt-2 text-sm">
-                {order.items.map((item, index) => <li key={`${order.id}-item-${index}`}>{item.quantity} × {item.product_name} · {money(item.line_total)}</li>)}
+                {order.items.map((item, index) => <li key={`${order.id}-item-${index}`}>{item.quantity} × {item.product_name} · {money(item.line_total)}{item.customer_notes ? ` · Obs.: ${item.customer_notes}` : ''}</li>)}
               </ul>
               {order.history.length > 0 && (
                 <details className="mt-3 text-sm">

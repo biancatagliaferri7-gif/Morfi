@@ -229,10 +229,10 @@ create table public.morfi_businesses (
   accepts_delivery boolean not null default false,
   accepts_pickup boolean not null default true,
   delivery_fee numeric(12, 2) not null default 0 check (delivery_fee >= 0),
-  payment_methods text[] not null default array['cash']::text[]
+  payment_method text[] not null default array['cash']::text[]
     check (
-      cardinality(payment_methods) > 0
-      and payment_methods <@ array['cash', 'transfer']::text[]
+      cardinality(payment_method) > 0
+      and payment_method <@ array['cash', 'transfer']::text[]
     ),
   is_open boolean not null default false,
   is_published boolean not null default false,
@@ -1719,7 +1719,7 @@ begin
   if not found then
     raise exception 'Business is unavailable';
   end if;
-  if not (p_payment_method = any(v_business.payment_methods)) then
+  if not (p_payment_method = any(v_business.payment_method)) then
     raise exception 'Payment method is unavailable for this business';
   end if;
   if p_delivery_mode = 'delivery' then
@@ -2068,7 +2068,7 @@ select
   b.accepts_delivery as business_accepts_delivery,
   b.accepts_pickup,
   b.delivery_fee,
-  b.payment_methods as business_payment_methods,
+  b.payment_method as business_payment_methods,
   b.is_open,
   p.name as product_name,
   p.description as product_description,
@@ -2125,8 +2125,8 @@ as $$
   select
     case when business.phone_is_public then business.contact_phone end,
     case when business.email_is_public then business.contact_email end,
-    case when 'transfer' = any(business.payment_methods) then business.transfer_alias end,
-    case when 'transfer' = any(business.payment_methods) then business.transfer_holder end,
+    case when 'transfer' = any(business.payment_method) then business.transfer_alias end,
+    case when 'transfer' = any(business.payment_method) then business.transfer_holder end,
     business.location,
     business.directions
   from public.morfi_businesses business
@@ -2259,7 +2259,7 @@ grant update (
 -- Anonymous table reads are column-limited to public listing fields only.
 grant select (
   id, name, description, logo_path, accepts_delivery, accepts_pickup,
-  delivery_fee, payment_methods, is_open, is_published
+  delivery_fee, payment_method, is_open, is_published
 ) on public.morfi_businesses to anon;
 grant select (
   id, business_id, name, description, image_path, price,
@@ -2276,7 +2276,7 @@ grant select (
 grant insert, update on public.morfi_businesses to authenticated;
 grant select (
   id, name, description, logo_path, accepts_delivery, accepts_pickup,
-  delivery_fee, payment_methods, is_open, is_published, location, directions
+  delivery_fee, payment_method, is_open, is_published, location, directions
 ) on public.morfi_businesses to authenticated;
 grant select on public.morfi_business_memberships to authenticated;
 grant select, delete on public.morfi_business_products to authenticated;

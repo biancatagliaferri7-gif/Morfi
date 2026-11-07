@@ -78,8 +78,7 @@ begin
     bank_name,
     bank_cuit,
     transfer_alias,
-    transfer_holder,
-    payment_methods
+    transfer_holder
   )
   values (
     new.id,
@@ -90,8 +89,7 @@ begin
     case when 'transfer' = any(v_payment_methods) then v_bank_name end,
     case when 'transfer' = any(v_payment_methods) then v_bank_cuit end,
     case when 'transfer' = any(v_payment_methods) then v_transfer_alias end,
-    case when 'transfer' = any(v_payment_methods) then v_transfer_holder end,
-    v_payment_methods
+    case when 'transfer' = any(v_payment_methods) then v_transfer_holder end
   );
 
   return new;

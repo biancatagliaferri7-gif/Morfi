@@ -6,8 +6,10 @@ export type ManagedBusiness = {
   description: string;
   logo_path: string | null;
   location: string | null;
+  directions: string | null;
   latitude: number | null;
   longitude: number | null;
+  phone_is_public: boolean;
   is_published: boolean;
 };
 
@@ -15,7 +17,9 @@ export type BusinessRegistrationInput = {
   name: string;
   description: string;
   contact_phone: string;
+  phone_is_public: boolean;
   location: string;
+  directions: string;
   latitude: number | null;
   longitude: number | null;
   bank_name: string | null;
@@ -67,7 +71,7 @@ export async function listManagedBusinesses(userId: string): Promise<ManagedBusi
 
   const { data, error } = await client
     .from('morfi_businesses')
-    .select('id, name, description, logo_path, location, latitude, longitude, is_published')
+    .select('id, name, description, logo_path, location, directions, latitude, longitude, phone_is_public, is_published')
     .in('id', businessIds);
 
   if (error) throw error;
@@ -81,8 +85,22 @@ export async function createBusiness(
   const client = getSupabase();
   const { data, error } = await client
     .from('morfi_businesses')
-    .insert({ created_by: userId, ...business })
-    .select('id, name, description, logo_path, location, latitude, longitude, is_published')
+    .insert({
+      created_by: userId,
+      name: business.name,
+      description: business.description,
+      contact_phone: business.contact_phone,
+      phone_is_public: business.phone_is_public,
+      location: business.location,
+      directions: business.directions,
+      latitude: business.latitude,
+      longitude: business.longitude,
+      bank_name: business.bank_name,
+      transfer_alias: business.transfer_alias,
+      transfer_holder: business.transfer_holder,
+      bank_cuit: business.bank_cuit,
+    })
+    .select('id, name, description, logo_path, location, directions, latitude, longitude, phone_is_public, is_published')
     .single();
 
   if (error) throw error;
@@ -97,7 +115,7 @@ export async function updateBusinessPublication(
     .from('morfi_businesses')
     .update({ is_published: isPublished })
     .eq('id', businessId)
-    .select('id, name, description, logo_path, location, latitude, longitude, is_published')
+    .select('id, name, description, logo_path, location, directions, latitude, longitude, phone_is_public, is_published')
     .single();
 
   if (error) throw error;
@@ -112,6 +130,31 @@ export async function updateBusinessCoordinates(
   const { error } = await getSupabase()
     .from('morfi_businesses')
     .update({ latitude, longitude })
+    .eq('id', businessId);
+
+  if (error) throw error;
+}
+
+export async function updateBusinessLocation(
+  businessId: string,
+  location: string,
+  directions: string,
+): Promise<void> {
+  const { error } = await getSupabase()
+    .from('morfi_businesses')
+    .update({ location, directions })
+    .eq('id', businessId);
+
+  if (error) throw error;
+}
+
+export async function updateBusinessPhoneVisibility(
+  businessId: string,
+  isPublic: boolean,
+): Promise<void> {
+  const { error } = await getSupabase()
+    .from('morfi_businesses')
+    .update({ phone_is_public: isPublic })
     .eq('id', businessId);
 
   if (error) throw error;
