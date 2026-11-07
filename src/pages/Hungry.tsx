@@ -9,7 +9,6 @@ import BusinessLocationMap from '../components/BusinessLocationMap';
 import {
   createMealOrder,
   getWhatsAppOrderDetails,
-  deliveryFeeStatusLabel,
   isOrderCheckoutV2Enabled,
   listCustomerMealOrders,
   orderStatusLabel,
@@ -48,7 +47,6 @@ type Shop = {
   acceptsDelivery: boolean;
   acceptsPickup: boolean;
   phone?: string;
-  alias?: string | null;
   location?: string | null;
   directions?: string | null;
   latitude?: number | null;
@@ -108,7 +106,6 @@ function mapPublicCatalog(catalog: PublicBusinessCatalog[]): Shop[] {
       averageRating: business.average_rating,
       reviewCount: business.review_count,
       phone: contact?.contact_phone ?? undefined,
-      alias: contact?.transfer_alias ?? null,
       location: contact?.location ?? null,
       directions: contact?.directions ?? null,
     };
@@ -208,13 +205,11 @@ export default function Hungry() {
   const [confirmedOrder, setConfirmedOrder] = useState<{
     orderLabel: string;
     whatsappOrderUrl: string | null;
-    whatsappReceiptUrl: string | null;
   } | null>(null);
   const [businessReviews, setBusinessReviews] = useState<PublicReview[]>([]);
   const [businessReviewsLoading, setBusinessReviewsLoading] = useState(false);
   const [businessReviewsError, setBusinessReviewsError] = useState('');
   const [notice, setNotice] = useState('');
-  const [aliasCopied, setAliasCopied] = useState(false);
   useEffect(() => {
     let active = true;
     async function loadCatalog() {
@@ -345,12 +340,6 @@ export default function Hungry() {
     lines.length > 0 &&
     lines.every(dish => dish.paymentMethods?.includes('cash') ?? false);
   const selectedPaymentAvailable = method === 'transfer' ? transferAvailable : cashAvailable;
-  const transferDetailsComplete = method !== 'transfer' ||
-    selected?.kind !== 'business' ||
-    Boolean(selected.alias?.trim());
-  const transferDetailsMissing = method === 'transfer' &&
-    selected?.kind === 'business' &&
-    !transferDetailsComplete;
   const businessWhatsappAvailable = selected?.kind === 'business' &&
     Boolean(selected.phone?.trim() && whatsappUrl(selected.phone, '') !== null);
   const deliveryFee = selected?.kind === 'business' && delivery === 'delivery' && subtotal > 0
@@ -364,7 +353,6 @@ export default function Hungry() {
   const canPlaceOrder = subtotal > 0 &&
     (delivery === 'pickup' ? supportsPickup : supportsDelivery && address.trim().length >= 5) &&
     selectedPaymentAvailable &&
-    !transferDetailsMissing &&
     (delivery !== 'delivery' || deliveryFee !== null || isOrderCheckoutV2Enabled) &&
     businessWhatsappAvailable;
   const normalizedCustomerPhone = normalizeCustomerPhone(customerPhoneInput);
@@ -372,6 +360,34 @@ export default function Hungry() {
   const customerPhonePersistable = isOrderCheckoutV2Enabled ||
     (normalizedCustomerPhone !== null &&
       normalizedCustomerPhone === normalizeCustomerPhone(profile?.phone ?? ''));
+  const checkoutV2Required = !isOrderCheckoutV2Enabled && (
+    (delivery === 'delivery' && deliveryFee === null) ||
+    Object.values(productNotes).some(note => note.trim()) ||
+    orderNotes.trim().length > 0 ||
+    deliveryReferences.trim().length > 0 ||
+    !customerPhonePersistable
+  );
+  const checkoutBlockers = [
+    ...(lines.length === 0 ? ['Agregá al menos un producto al carrito.'] : []),
+    ...(lines.length > 0 && (delivery === 'pickup' ? !supportsPickup : !supportsDelivery)
+      ? ['El emprendimiento o algún producto del carrito no admite esta modalidad de entrega.']
+      : []),
+    ...(lines.length > 0 && !selectedPaymentAvailable
+      ? ['Todos los productos deben aceptar el medio de pago seleccionado.']
+      : []),
+    ...(lines.length > 0 && !businessWhatsappAvailable
+      ? ['El WhatsApp debe estar habilitado como público por el emprendimiento.']
+      : []),
+    ...(session && lines.length > 0 && !profile?.full_name?.trim()
+      ? ['Completá tu nombre en el perfil.']
+      : []),
+    ...(session && lines.length > 0 && !normalizedCustomerPhone
+      ? ['Ingresá un teléfono de cliente válido.']
+      : []),
+    ...(checkoutV2Required
+      ? ['Instalá la migración de checkout V2 en Supabase y habilitá VITE_MORFI_ORDER_CHECKOUT_V2=true para este despliegue.']
+      : []),
+  ];
   const canOrder = canPlaceOrder &&
     customerDetailsComplete &&
     customerPhonePersistable &&
@@ -439,7 +455,6 @@ export default function Hungry() {
     setAddress('');
     setDeliveryReferences('');
     setDelivery('pickup');
-    setAliasCopied(false);
   };
   function prioritizeNearbyBusinesses() {
     if (!navigator.geolocation) {
@@ -511,17 +526,7 @@ export default function Hungry() {
       return;
     }
     if (!canOrder) {
-      if (!profile?.full_name?.trim() || !normalizedCustomerPhone) {
-        setNotice('Completá tu nombre y teléfono en tu perfil antes de confirmar el pedido.');
-      } else if (!customerPhonePersistable) {
-        setNotice('El teléfono ingresado se guardará cuando se active el checkout actualizado.');
-      } else if (!businessWhatsappAvailable) {
-        setNotice('Este emprendimiento no tiene un WhatsApp público válido para recibir pedidos.');
-      } else if (!selectedPaymentAvailable) {
-        setNotice('El medio de pago elegido no está disponible para todos los productos del carrito.');
-      } else if (!transferDetailsComplete) {
-        setNotice('No se puede confirmar: falta el alias de transferencia del emprendimiento.');
-      }
+      setNotice(checkoutBlockers.join(' '));
       return;
     }
     const customerPhone = normalizedCustomerPhone;
@@ -555,21 +560,13 @@ export default function Hungry() {
       });
       savedOrderId = createdOrder.id;
       savedOrderNumber = createdOrder.orderNumber;
-      const persistedOrder = await getWhatsAppOrderDetails(createdOrder.id, {
-        alias: selected.alias ?? null,
-        holder: null,
-      });
+      const persistedOrder = await getWhatsAppOrderDetails(createdOrder.id);
       const orderLabel = String(
         persistedOrder.order_number ?? createdOrder.orderNumber ?? createdOrder.id.slice(0, 8),
       );
       const orderDetails = persistedOrder.items.map(item =>
         `${item.quantity}, ${item.product_name}: ${money(item.line_total)}`,
       ).join('\n');
-      const transferAlias = persistedOrder.transfer_alias?.trim();
-      const transferHolder = persistedOrder.transfer_holder?.trim();
-      if (method === 'transfer' && (!transferAlias || !transferHolder)) {
-        throw new Error('El pedido se registró, pero faltan el alias o el titular de la transferencia.');
-      }
       const orderMessage = [
         '🍔 NUEVO PEDIDO DESDE MORFI',
         '',
@@ -596,23 +593,20 @@ export default function Hungry() {
           ...(persistedOrder.delivery_references?.trim()
             ? [`Referencias: ${persistedOrder.delivery_references.trim()}`]
             : []),
-          `Costo de envío: ${persistedOrder.delivery_fee === null ? 'Pendiente de cotización' : money(persistedOrder.delivery_fee)}`,
+          'Costo de envío: a coordinar con el emprendimiento por WhatsApp.',
         ] : []),
         '',
-        `Subtotal: ${money(persistedOrder.subtotal)}`,
+        `Subtotal de productos: ${money(persistedOrder.subtotal)}`,
         ...(persistedOrder.discount_total > 0
           ? [`Descuento en efectivo: -${money(persistedOrder.discount_total)}`]
           : []),
-        `💰 TOTAL: ${persistedOrder.total === null ? 'Total pendiente' : money(persistedOrder.total)}`,
+        ...(persistedOrder.delivery_mode === 'delivery'
+          ? ['💰 Total del pedido: costo de envío a coordinar.']
+          : [`💰 TOTAL: ${persistedOrder.total === null ? money(persistedOrder.subtotal - persistedOrder.discount_total) : money(persistedOrder.total)}`]),
         '',
         ...(persistedOrder.payment_method === 'transfer' ? [
           '🏦 PAGO POR TRANSFERENCIA',
-          `Titular: ${transferHolder}`,
-          `Alias: ${transferAlias}`,
-          '',
-          ...(persistedOrder.total === null
-            ? ['⏳ Pendiente de cotización. No transferir hasta conocer el total definitivo.']
-            : ['📎 Enviaré el comprobante por este chat.', '', '⏳ Pedido pendiente de pago.']),
+          '⏳ Pago pendiente. El emprendimiento coordinará los datos para completar la transferencia por este chat.',
         ] : [
           '💵 PAGO EN EFECTIVO',
           '⏳ Pago pendiente al retirar o recibir el pedido.',
@@ -622,9 +616,6 @@ export default function Hungry() {
       if (!orderUrl) {
         throw new Error('El pedido se registró, pero el WhatsApp público del emprendimiento no es válido.');
       }
-      const receiptMessage = persistedOrder.payment_method === 'transfer' && persistedOrder.total !== null
-        ? `Hola, envío el comprobante de transferencia del pedido #${orderLabel} de ${selected.name} por ${money(persistedOrder.total)}.`
-        : null;
       try {
         sessionStorage.removeItem(pendingOrderKey);
       } catch (error) {
@@ -640,7 +631,6 @@ export default function Hungry() {
       setConfirmedOrder({
         orderLabel,
         whatsappOrderUrl: orderUrl,
-        whatsappReceiptUrl: receiptMessage ? whatsappUrl(selected.phone!, receiptMessage) : null,
       });
       let whatsappOpened = false;
       try {
@@ -667,18 +657,6 @@ export default function Hungry() {
       setOrderBusy(false);
     }
   };
-  async function copyTransferAlias() {
-    if (!selected?.alias) return;
-    try {
-      await navigator.clipboard.writeText(selected.alias);
-      setAliasCopied(true);
-      setNotice('Alias copiado.');
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : 'Error inesperado.';
-      setAliasCopied(false);
-      setNotice(`No se pudo copiar el alias: ${detail}`);
-    }
-  }
   return (
     <div className="min-h-screen bg-[#FFF3E5] px-4 py-8 text-[#8B3F14]">
       <div className="mx-auto max-w-6xl">
@@ -900,12 +878,12 @@ export default function Hungry() {
                       <span>Descuento en efectivo</span><strong>-{money(discountTotal)}</strong>
                     </p>
                   )}
-                  <p className="mt-1 flex justify-between">
-                    <span>{selected.kind === 'supplier' ? 'Envío (demo)' : 'Envío'}</span>
-                    <strong>{delivery === 'delivery' && deliveryFee === null ? 'Envío a confirmar' : money(deliveryFee ?? 0)}</strong>
-                  </p>
+                  {delivery === 'delivery' ? (
+                    <p className="mt-1 text-sm text-gray-700">El costo de envío se coordina por WhatsApp.</p>
+                  ) : null}
                   <p className="mt-2 flex justify-between text-lg font-black">
-                    <span>{total === null ? 'Total pendiente de cotización' : 'Total'}</span><span>{total === null ? 'A confirmar' : money(total)}</span>
+                    <span>{delivery === 'delivery' ? 'Subtotal de productos' : 'Total'}</span>
+                    <span>{money(delivery === 'delivery' ? discountedSubtotal : total ?? discountedSubtotal)}</span>
                   </p>
                 </div>
                 {session && selected.kind === 'business' && (
@@ -1006,7 +984,7 @@ export default function Hungry() {
                       />
                       <span>
                         <strong className="block">Transferencia bancaria</strong>
-                        <span className="text-sm text-gray-600">Alias del emprendimiento</span>
+                        <span className="text-sm text-gray-600">El emprendimiento coordina el pago por WhatsApp</span>
                       </span>
                     </label>
                   </div>
@@ -1019,27 +997,6 @@ export default function Hungry() {
                     </p>
                   )}
                 </fieldset>
-                {method === 'transfer' && lines.length > 0 && selected.kind === 'business' && (
-                  <div className="mb-3 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm">
-                    <h4 className="font-bold">Datos para transferir</h4>
-                    <p className="mt-2"><strong>{total === null ? 'Total pendiente:' : 'Total:'}</strong> {total === null ? 'A confirmar por el costo de envío' : money(total)}</p>
-                    <p className="mt-1"><strong>Alias:</strong> {selected.alias || 'No disponible'}</p>
-                    {selected.alias && (
-                      <button
-                        type="button"
-                        onClick={() => void copyTransferAlias()}
-                        className="mt-2 rounded-lg border border-orange-300 px-3 py-2 font-bold text-[#8B3F14]"
-                      >
-                        {aliasCopied ? 'Alias copiado' : 'Copiar alias'}
-                      </button>
-                    )}
-                    <p className="mt-2 text-xs text-gray-700">
-                      {total === null
-                        ? 'No transfieras todavía. El emprendimiento debe confirmar el costo de envío y el total definitivo.'
-                        : 'El pago queda pendiente hasta que envíes el comprobante al emprendimiento.'}
-                    </p>
-                  </div>
-                )}
                 {method === 'cash' && lines.length > 0 && (
                   <p className="mb-3 rounded-lg bg-green-50 p-3 text-sm text-green-900">
                     El pago queda pendiente y se realiza en efectivo al retirar o recibir el pedido.
@@ -1078,45 +1035,20 @@ export default function Hungry() {
                     <div className="mt-3 space-y-1 border-t border-orange-200 pt-2 text-sm">
                       <p className="flex justify-between"><span>Subtotal</span><strong>{money(subtotal)}</strong></p>
                       {discountTotal > 0 && <p className="flex justify-between text-green-800"><span>Descuento en efectivo</span><strong>-{money(discountTotal)}</strong></p>}
-                      <p className="flex justify-between"><span>Costo de envío</span><strong>{delivery === 'delivery' && deliveryFee === null ? 'Envío a confirmar' : money(deliveryFee ?? 0)}</strong></p>
-                      <p className="flex justify-between text-base font-black"><span>{total === null ? 'Total pendiente de cotización' : 'Total'}</span><span>{total === null ? 'A confirmar' : money(total)}</span></p>
+                      {delivery === 'delivery' ? (
+                        <p className="text-gray-700">Costo de envío a coordinar por WhatsApp.</p>
+                      ) : null}
+                      <p className="flex justify-between text-base font-black">
+                        <span>{delivery === 'delivery' ? 'Subtotal de productos' : 'Total'}</span>
+                        <span>{money(delivery === 'delivery' ? discountedSubtotal : total ?? discountedSubtotal)}</span>
+                      </p>
                     </div>
                   </section>
                 )}
-                {!isOrderCheckoutV2Enabled && (Object.values(productNotes).some(note => note.trim()) || orderNotes.trim() || deliveryReferences.trim()) && (
-                  <p role="status" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-                    Para guardar observaciones y referencias, el sistema de checkout actualizado debe estar habilitado después de aplicar las migraciones.
-                  </p>
-                )}
-                {isOrderCheckoutV2Enabled && (Object.values(productNotes).some(note => note.trim()) || orderNotes.trim() || deliveryReferences.trim()) && (
-                  <p className="mt-3 rounded-lg bg-green-50 p-3 text-sm text-green-900">
-                    Las observaciones y referencias se guardarán junto con el pedido.
-                  </p>
-                )}
-                {selected.kind === 'business' && !selectedPaymentAvailable && lines.length > 0 && (
-                  <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">
-                    Todos los productos del carrito deben aceptar el medio de pago elegido.
-                  </p>
-                )}
-                {transferDetailsMissing && (
-                  <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-                    No se puede confirmar una transferencia hasta que el emprendimiento configure su alias.
-                  </p>
-                )}
-                {selected.kind === 'business' && !businessWhatsappAvailable && lines.length > 0 && (
-                  <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-                    No se puede registrar el pedido sin un WhatsApp público válido del emprendimiento.
-                  </p>
-                )}
-                {session && !customerDetailsComplete && lines.length > 0 && (
-                  <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-                    Completá tu nombre en el perfil e ingresá un teléfono válido antes de confirmar.
-                  </p>
-                )}
-                {session && customerDetailsComplete && !customerPhonePersistable && lines.length > 0 && (
-                  <p role="alert" className="mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-                    El checkout actualizado debe estar activo para guardar este teléfono junto con el pedido.
-                  </p>
+                {checkoutBlockers.length > 0 && (
+                  <ul role="alert" className="mt-3 list-disc space-y-1 rounded-lg bg-amber-50 p-3 pl-8 text-sm text-amber-900">
+                    {checkoutBlockers.map(blocker => <li key={blocker}>{blocker}</li>)}
+                  </ul>
                 )}
                 <button disabled={orderBusy || (session ? !canOrder : !canPlaceOrder)} onClick={() => void confirm()} className="mt-4 min-h-14 w-full rounded-xl bg-[#8B3F14] p-4 text-lg font-black text-white disabled:cursor-not-allowed disabled:opacity-40">
                   {!session ? 'Iniciar sesión para continuar' : orderBusy ? 'Registrando pedido…' : 'Confirmar pedido por WhatsApp'}
@@ -1143,16 +1075,6 @@ export default function Hungry() {
                         El pedido quedó confirmado, pero este emprendimiento no tiene un WhatsApp público disponible.
                       </p>
                     )}
-                    {confirmedOrder.whatsappReceiptUrl && (
-                      <a
-                        href={confirmedOrder.whatsappReceiptUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="mt-2 inline-flex min-h-12 w-full items-center justify-center rounded-xl border border-green-800 bg-white px-4 py-3 text-center font-bold text-green-800"
-                      >
-                        Enviar comprobante de transferencia
-                      </a>
-                    )}
                   </section>
                 )}
               </section>
@@ -1171,26 +1093,23 @@ export default function Hungry() {
           )}
           {customerOrders.map(order => (
             <div key={order.id} className="mt-3 rounded-xl border p-3">
-              <div className="flex flex-wrap justify-between gap-2"><strong>{order.business_name} · Pedido #{order.order_number ?? order.id.slice(0, 8)}</strong><span className="font-bold">{order.total === null ? 'Total pendiente de cotización' : money(order.total)}</span></div>
+              <div className="flex flex-wrap justify-between gap-2">
+                <strong>{order.business_name} · Pedido #{order.order_number ?? order.id.slice(0, 8)}</strong>
+                <span className="font-bold">
+                  {order.delivery_mode === 'delivery'
+                    ? `Subtotal productos: ${money(order.subtotal - order.discount_total)}`
+                    : order.total === null ? 'Total pendiente' : money(order.total)}
+                </span>
+              </div>
               <p className="mt-1 text-sm text-gray-600">{new Date(order.created_at).toLocaleString('es-AR')} · {order.delivery_mode === 'pickup' ? 'Retiro en el local' : `Entrega: ${order.delivery_address ?? ''}`} · {order.payment_method === 'cash' ? 'Efectivo' : 'Transferencia'}</p>
               {order.delivery_mode === 'delivery' && (
-                <p className="mt-1 text-sm">{deliveryFeeStatusLabel(order.delivery_fee_status)}
+                <p className="mt-1 text-sm">
+                  Costo de envío a coordinar por WhatsApp
                   {order.delivery_references && ` · Referencias: ${order.delivery_references}`}
-                  {order.delivery_fee !== null && ` · ${money(order.delivery_fee)}`}
                 </p>
               )}
               {order.customer_notes && <p className="mt-1 text-sm"><strong>Observaciones del pedido:</strong> {order.customer_notes}</p>}
               <p className="mt-1 text-sm font-semibold">Pago: {paymentStatusLabel(order.payment_status, order.delivery_fee_status)}</p>
-              {order.payment_method === 'transfer' && order.transfer_alias && (
-                <div className="mt-1 rounded-lg bg-orange-50 p-3 text-sm">
-                  <p>Alias de transferencia: {order.transfer_alias}</p>
-                  {order.total === null
-                    ? <p className="mt-1 font-semibold">No transfieras hasta que el emprendimiento confirme el costo de envío y el total definitivo.</p>
-                    : order.payment_status === 'pending_payment' || order.payment_status === 'pending_verification'
-                    ? <p className="mt-1 font-semibold">Total definitivo: {money(order.total)}. Ya podés transferir y enviar el comprobante al emprendimiento.</p>
-                      : null}
-                </div>
-              )}
               <p className="mt-2 font-bold">{orderStatusLabel(order.status, order.delivery_mode)}</p>
               {order.status_reason && <p className="mt-1 text-sm text-gray-600">Motivo: {order.status_reason}</p>}
               {['pending', 'accepted', 'preparing', 'ready'].includes(order.status) && (

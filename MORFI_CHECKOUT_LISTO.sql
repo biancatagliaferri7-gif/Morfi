@@ -108,7 +108,7 @@ begin
     or has_column_privilege('authenticated', 'public.morfi_businesses', 'transfer_alias', 'SELECT')
     or has_column_privilege('authenticated', 'public.morfi_businesses', 'transfer_holder', 'SELECT')
   then
-    raise exception 'Bank details must not be directly selectable; expose only the transfer alias through its public RPC';
+    raise exception 'Bank details must not be directly selectable by clients';
   end if;
 
   if to_regprocedure('public.morfi_public_business_contact(uuid)') is null
@@ -369,6 +369,13 @@ $$;
   alter table public.morfi_orders
     add column if not exists status_reason text;
 
+-- A configured business WhatsApp is public for catalog and order delivery.
+-- The public contact function below still returns it only for published businesses.
+update public.morfi_businesses
+set phone_is_public = true
+where nullif(btrim(contact_phone), '') is not null
+  and phone_is_public is distinct from true;
+
 create or replace function public.morfi_public_business_contact(p_business_id uuid)
 returns table (
   contact_phone text,
@@ -386,7 +393,7 @@ as $$
   select
     case when business.phone_is_public then business.contact_phone end,
     case when business.email_is_public then business.contact_email end,
-    nullif(btrim(business.transfer_alias), ''),
+    null::text,
     null::text,
     business.location,
     business.directions
@@ -417,8 +424,6 @@ $$;
 
 revoke all on function public.morfi_public_business_transfer_alias(uuid)
   from public, anon, authenticated;
-grant execute on function public.morfi_public_business_transfer_alias(uuid)
-  to anon, authenticated;
 
 -- Keep the legacy function signature, but stop exposing bank names publicly.
 do $$
@@ -1010,8 +1015,8 @@ begin
     end if;
 
     if new.payment_method = 'transfer' then
-      new.transfer_alias_snapshot := v_business.transfer_alias;
-      new.transfer_holder_snapshot := v_business.transfer_holder;
+      new.transfer_alias_snapshot := null;
+      new.transfer_holder_snapshot := null;
       new.transfer_bank_snapshot := null;
     end if;
     if new.delivery_fee_status = 'pending' then
@@ -1582,14 +1587,6 @@ begin
     where nullif(btrim(business_contact.contact_phone), '') is not null
   ) then
     raise exception 'A public WhatsApp contact is required to receive MORFI orders';
-  end if;
-  if p_payment_method = 'transfer'
-    and (
-      nullif(btrim(v_business.transfer_alias), '') is null
-      or nullif(btrim(v_business.transfer_holder), '') is null
-    )
-  then
-    raise exception 'A transfer alias and account holder must be configured for transfer payments';
   end if;
   if p_delivery_mode = 'delivery' then
     if not v_business.accepts_delivery then

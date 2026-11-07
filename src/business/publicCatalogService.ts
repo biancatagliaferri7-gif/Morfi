@@ -37,7 +37,6 @@ export type PublicBusinessProduct = {
 export type PublicBusinessContact = {
   contact_phone: string | null;
   contact_email: string | null;
-  transfer_alias: string | null;
   location: string | null;
   directions: string | null;
 };
@@ -123,26 +122,15 @@ export async function listPublishedBusinessCatalog(): Promise<PublicBusinessCata
   ]));
 
   const contacts = await Promise.all(businessIds.map(async businessId => {
-    const [contactResult, paymentDetailsResult] = await Promise.all([
-      client.rpc('morfi_public_business_contact', {
-        p_business_id: businessId,
-      }),
-      client.rpc('morfi_public_business_transfer_alias', {
-        p_business_id: businessId,
-      }),
-    ]);
+    const contactResult = await client.rpc('morfi_public_business_contact', {
+      p_business_id: businessId,
+    });
     if (contactResult.error) throw contactResult.error;
-    if (paymentDetailsResult.error && paymentDetailsResult.error.code !== 'PGRST202') {
-      throw paymentDetailsResult.error;
-    }
     const contact = contactResult.data?.[0];
     return [businessId, contact
       ? {
           contact_phone: contact.contact_phone ?? null,
           contact_email: contact.contact_email ?? null,
-          transfer_alias: paymentDetailsResult.error
-            ? contact.transfer_alias ?? null
-            : paymentDetailsResult.data?.[0]?.transfer_alias ?? null,
           location: contact.location ?? null,
           directions: contact.directions ?? null,
         }

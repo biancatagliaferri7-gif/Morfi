@@ -476,14 +476,6 @@ begin
   ) then
     raise exception 'A public WhatsApp contact is required to receive MORFI orders';
   end if;
-  if p_payment_method = 'transfer'
-    and (
-      nullif(btrim(v_business.transfer_alias), '') is null
-      or nullif(btrim(v_business.transfer_holder), '') is null
-    )
-  then
-    raise exception 'A transfer alias and account holder must be configured for transfer payments';
-  end if;
   if p_delivery_mode = 'delivery' then
     if not v_business.accepts_delivery then
       raise exception 'Delivery is unavailable for this business';
