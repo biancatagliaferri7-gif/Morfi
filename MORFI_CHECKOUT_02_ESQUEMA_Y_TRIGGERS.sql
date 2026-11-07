@@ -277,8 +277,8 @@ begin
 
     if new.payment_method = 'transfer' then
       new.transfer_alias_snapshot := v_business.transfer_alias;
+      new.transfer_holder_snapshot := v_business.transfer_holder;
       new.transfer_bank_snapshot := null;
-      new.transfer_holder_snapshot := null;
     end if;
     if new.delivery_fee_status = 'pending' then
       new.payment_status := case

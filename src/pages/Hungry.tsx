@@ -557,6 +557,7 @@ export default function Hungry() {
       savedOrderNumber = createdOrder.orderNumber;
       const persistedOrder = await getWhatsAppOrderDetails(createdOrder.id, {
         alias: selected.alias ?? null,
+        holder: null,
       });
       const orderLabel = String(
         persistedOrder.order_number ?? createdOrder.orderNumber ?? createdOrder.id.slice(0, 8),
@@ -565,8 +566,9 @@ export default function Hungry() {
         `${item.quantity}, ${item.product_name}: ${money(item.line_total)}`,
       ).join('\n');
       const transferAlias = persistedOrder.transfer_alias?.trim();
-      if (method === 'transfer' && !transferAlias) {
-        throw new Error('El pedido se registró, pero falta el alias público del emprendimiento.');
+      const transferHolder = persistedOrder.transfer_holder?.trim();
+      if (method === 'transfer' && (!transferAlias || !transferHolder)) {
+        throw new Error('El pedido se registró, pero faltan el alias o el titular de la transferencia.');
       }
       const orderMessage = [
         '🍔 NUEVO PEDIDO DESDE MORFI',
@@ -586,6 +588,9 @@ export default function Hungry() {
           : []),
         '',
         `🚚 Entrega: ${persistedOrder.delivery_mode === 'pickup' ? 'Retiro en el local' : 'Delivery'}`,
+        ...(persistedOrder.delivery_mode === 'pickup' && selected.location
+          ? [`📍 Ubicación del local: ${selected.location}`]
+          : []),
         ...(persistedOrder.delivery_mode === 'delivery' ? [
           `📍 Dirección: ${persistedOrder.delivery_address ?? ''}`,
           ...(persistedOrder.delivery_references?.trim()
@@ -602,6 +607,7 @@ export default function Hungry() {
         '',
         ...(persistedOrder.payment_method === 'transfer' ? [
           '🏦 PAGO POR TRANSFERENCIA',
+          `Titular: ${transferHolder}`,
           `Alias: ${transferAlias}`,
           '',
           ...(persistedOrder.total === null
@@ -788,6 +794,7 @@ export default function Hungry() {
               (selected.latitude != null && selected.longitude != null)) && (
               <div className="mb-5 rounded-xl bg-white p-4 shadow-sm">
                 {selected.location && <p className="mt-1"><strong>Local:</strong> {selected.location}{selected.directions ? ` · ${selected.directions}` : ''}</p>}
+                {selected.phone && <p className="mt-1"><strong>WhatsApp:</strong> {selected.phone}</p>}
                 {selected.kind === 'business' && selected.latitude != null && selected.longitude != null && (
                   <BusinessLocationMap latitude={selected.latitude} longitude={selected.longitude} />
                 )}

@@ -482,7 +482,7 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
                   />
                 </label>
                 <label className="block text-sm font-semibold">
-                  WhatsApp donde recibirás pedidos
+                  WhatsApp público donde recibirás pedidos
                   <span className="mt-1 flex items-center rounded-xl border border-gray-300 bg-white">
                     <span className="px-3 text-sm text-gray-500">+54 9</span>
                     <input
@@ -497,7 +497,7 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
                       required
                     />
                   </span>
-                  <span className="mt-1 block text-xs font-normal text-gray-500">Ingresá los 10 números; el prefijo argentino se agrega automáticamente.</span>
+                  <span className="mt-1 block text-xs font-normal text-gray-500">Este WhatsApp se mostrará en el catálogo público para que los clientes puedan contactarte y enviarte pedidos. Ingresá los 10 números; el prefijo argentino se agrega automáticamente.</span>
                 </label>
                 <fieldset className="space-y-3 rounded-xl border p-3">
                   <legend className="px-1 text-sm font-semibold">Datos de tu emprendimiento</legend>

@@ -84,6 +84,7 @@ export type WhatsAppOrderDetails = {
   delivery_fee: number | null;
   total: number | null;
   transfer_alias: string | null;
+  transfer_holder: string | null;
   customer_notes: string | null;
   items: {
     product_name: string;
@@ -310,13 +311,13 @@ export function listBusinessMealOrders(businessId: string): Promise<MealOrder[]>
 
 export async function getWhatsAppOrderDetails(
   orderId: string,
-  transferDetails: { alias: string | null },
+  transferDetails: { alias: string | null; holder: string | null },
 ): Promise<WhatsAppOrderDetails> {
   const client = getSupabase();
   const orderResult = isOrderCheckoutV2Enabled
     ? await client
       .from('morfi_orders')
-      .select('order_number, customer_name_snapshot, customer_phone_snapshot, delivery_mode, delivery_address, delivery_references, delivery_fee_status, payment_method, payment_status, subtotal, discount_total, delivery_fee, total, transfer_alias_snapshot, customer_notes')
+      .select('order_number, customer_name_snapshot, customer_phone_snapshot, delivery_mode, delivery_address, delivery_references, delivery_fee_status, payment_method, payment_status, subtotal, discount_total, delivery_fee, total, transfer_alias_snapshot, transfer_holder_snapshot, customer_notes')
       .eq('id', orderId)
       .single()
     : await client
@@ -346,6 +347,9 @@ export async function getWhatsAppOrderDetails(
   const transferAlias = isOrderCheckoutV2Enabled && 'transfer_alias_snapshot' in order
     ? order.transfer_alias_snapshot
     : transferDetails.alias;
+  const transferHolder = isOrderCheckoutV2Enabled && 'transfer_holder_snapshot' in order
+    ? order.transfer_holder_snapshot
+    : transferDetails.holder;
   const rawDeliveryFeeStatus = isOrderCheckoutV2Enabled && 'delivery_fee_status' in order
     ? order.delivery_fee_status
     : null;
@@ -395,6 +399,7 @@ export async function getWhatsAppOrderDetails(
     delivery_fee: order.delivery_fee === null ? null : Number(order.delivery_fee),
     total: order.total === null ? null : Number(order.total),
     transfer_alias: typeof transferAlias === 'string' ? transferAlias : null,
+    transfer_holder: typeof transferHolder === 'string' ? transferHolder : null,
     customer_notes: typeof rawCustomerNotes === 'string' ? rawCustomerNotes : null,
     items: items.map(item => ({
       product_name: item.product_name,

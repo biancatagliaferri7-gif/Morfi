@@ -339,6 +339,7 @@ $$;
       name,
       description,
       contact_phone,
+      phone_is_public,
       location,
       bank_name,
       bank_cuit,
@@ -350,6 +351,7 @@ $$;
       v_name,
       v_description,
       new.raw_user_meta_data ->> 'phone',
+      true,
       v_location,
       case when 'transfer' = any(v_payment_methods) then v_bank_name end,
       case when 'transfer' = any(v_payment_methods) then v_bank_cuit end,
@@ -1009,8 +1011,8 @@ begin
 
     if new.payment_method = 'transfer' then
       new.transfer_alias_snapshot := v_business.transfer_alias;
+      new.transfer_holder_snapshot := v_business.transfer_holder;
       new.transfer_bank_snapshot := null;
-      new.transfer_holder_snapshot := null;
     end if;
     if new.delivery_fee_status = 'pending' then
       new.payment_status := case
@@ -1582,9 +1584,12 @@ begin
     raise exception 'A public WhatsApp contact is required to receive MORFI orders';
   end if;
   if p_payment_method = 'transfer'
-    and nullif(btrim(v_business.transfer_alias), '') is null
+    and (
+      nullif(btrim(v_business.transfer_alias), '') is null
+      or nullif(btrim(v_business.transfer_holder), '') is null
+    )
   then
-    raise exception 'A transfer alias must be configured for transfer payments';
+    raise exception 'A transfer alias and account holder must be configured for transfer payments';
   end if;
   if p_delivery_mode = 'delivery' then
     if not v_business.accepts_delivery then

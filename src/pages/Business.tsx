@@ -202,7 +202,7 @@ export default function Business() {
   const [businessName, setBusinessName] = useState('');
   const [businessDescription, setBusinessDescription] = useState('');
   const [businessPhone, setBusinessPhone] = useState(profile?.phone ?? '');
-  const [businessPhonePublic, setBusinessPhonePublic] = useState(false);
+  const [businessPhonePublic, setBusinessPhonePublic] = useState(true);
   const [businessLocation, setBusinessLocation] = useState('');
   const [businessDirections, setBusinessDirections] = useState('');
   const [businessLatitude, setBusinessLatitude] = useState<number | null>(null);
@@ -409,7 +409,7 @@ export default function Business() {
       setBusinessName('');
       setBusinessDescription('');
       setBusinessPhone(profile?.phone ?? '');
-      setBusinessPhonePublic(false);
+      setBusinessPhonePublic(true);
       setBusinessLocation('');
       setBusinessDirections('');
       setBusinessLatitude(null);
@@ -1205,7 +1205,7 @@ export default function Business() {
                 checked={businessPhonePublic}
                 onChange={event => setBusinessPhonePublic(event.target.checked)}
               />
-              <span>Autorizo que este WhatsApp se muestre en el catálogo público para recibir consultas y comprobantes.</span>
+              <span>Autorizo que este WhatsApp se muestre en el catálogo público para recibir consultas y pedidos. Está activado por defecto.</span>
             </label>
             <div className="rounded-xl border border-orange-100 p-4">
               <p className="text-sm">Para ubicar tu emprendimiento en MORFI, permití el acceso a tu ubicación GPS.</p>
