@@ -93,8 +93,8 @@ const HeroSection: React.FC = () => (
         <TickDecoration />
         <div className="home-cover">
           <img
-            src="/morfi-portada-festin.png"
-            alt="Comidas callejeras de MORFI: empanadas, pizza, lomito y choripán"
+            src="/morfi-portada-original.jpeg"
+            alt="Una bolsa de MORFI rodeada de distintas comidas"
             className="home-cover-image"
           />
           <div className="home-cover-shade" />

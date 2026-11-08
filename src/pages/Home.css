@@ -257,7 +257,6 @@
 .home-cover {
   position: relative;
   overflow: hidden;
-  aspect-ratio: 1.17;
   border: 7px solid rgb(255 255 255 / 78%);
   border-radius: 30px;
   background: #f4dfc8;
@@ -267,8 +266,7 @@
 .home-cover-image {
   display: block;
   width: 100%;
-  height: 100%;
-  object-fit: cover;
+  height: auto;
   transition: transform 650ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
@@ -277,17 +275,10 @@
 }
 
 .home-cover-shade {
-  position: absolute;
-  inset: 45% 0 0;
-  background: linear-gradient(transparent, rgb(55 27 10 / 25%));
-  pointer-events: none;
+  display: none;
 }
 
 .home-cover-caption {
-  position: absolute;
-  right: 18px;
-  bottom: 18px;
-  left: 18px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -499,7 +490,6 @@
   }
 
   .home-cover {
-    aspect-ratio: 0.98;
     border-radius: 25px;
   }
 
@@ -526,15 +516,11 @@
   }
 
   .home-cover {
-    aspect-ratio: 1.35;
     border-width: 5px;
     border-radius: 23px;
   }
 
   .home-cover-caption {
-    right: 12px;
-    bottom: 12px;
-    left: 12px;
     padding: 12px 14px;
     border-radius: 15px;
   }
