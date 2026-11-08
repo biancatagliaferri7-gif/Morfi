@@ -74,6 +74,10 @@ function distanceInKm(shop: Shop, coordinates: Coordinates): number {
 
 function mapPublicCatalog(catalog: PublicBusinessCatalog[]): Shop[] {
   return catalog.map(({ business, products, contact }) => {
+    const rawDeliveryFee = business.delivery_fee == null ? null : Number(business.delivery_fee);
+    const legacyDeliveryFeeStatus = rawDeliveryFee == null
+      ? null
+      : rawDeliveryFee <= 0 ? 'free' as const : 'fixed' as const;
     const dishes = products.map(product => ({
       id: product.id,
       name: product.name,
@@ -100,10 +104,16 @@ function mapPublicCatalog(catalog: PublicBusinessCatalog[]): Shop[] {
       acceptsPickup: business.accepts_pickup,
       latitude: business.latitude,
       longitude: business.longitude,
-      deliveryFee: business.delivery_fee == null || Number(business.delivery_fee) <= 0
-        ? business.delivery_fee_status === 'free' ? 0 : null
-        : Number(business.delivery_fee),
-      deliveryFeeStatus: business.delivery_fee_status,
+      // The legacy schema represents a free delivery fee as 0. V2 has an
+      // explicit status, so only use that status when the feature is enabled.
+      deliveryFee: isOrderCheckoutV2Enabled
+        ? rawDeliveryFee == null || rawDeliveryFee <= 0
+          ? business.delivery_fee_status === 'free' ? 0 : null
+          : rawDeliveryFee
+        : rawDeliveryFee,
+      deliveryFeeStatus: isOrderCheckoutV2Enabled
+        ? business.delivery_fee_status
+        : legacyDeliveryFeeStatus,
       averageRating: business.average_rating,
       reviewCount: business.review_count,
       phone: contact?.contact_phone ?? undefined,
@@ -371,12 +381,11 @@ export default function Hungry() {
     businessWhatsappAvailable;
   const normalizedCustomerPhone = normalizeCustomerPhone(customerPhoneInput);
   const customerDetailsComplete = Boolean(profile?.full_name?.trim() && normalizedCustomerPhone);
-  const checkoutV2Required = !isOrderCheckoutV2Enabled && (
-    (delivery === 'delivery' && deliveryFee === null) ||
-    Object.values(productNotes).some(note => note.trim()) ||
+  const hasCheckoutNotes = Object.values(productNotes).some(note => note.trim()) ||
     orderNotes.trim().length > 0 ||
-    deliveryReferences.trim().length > 0
-  );
+    deliveryReferences.trim().length > 0;
+  const deliveryQuoteRequiresV2 = !isOrderCheckoutV2Enabled &&
+    delivery === 'delivery' && deliveryFee === null;
   const checkoutBlockers = [
     ...(lines.length === 0 ? ['Agregá al menos un producto al carrito.'] : []),
     ...(lines.length > 0 && (delivery === 'pickup' ? !supportsPickup : !supportsDelivery)
@@ -394,8 +403,11 @@ export default function Hungry() {
     ...(session && lines.length > 0 && !normalizedCustomerPhone
       ? ['Ingresá un teléfono de cliente válido.']
       : []),
-    ...(checkoutV2Required
-      ? ['Esta opción todavía no está disponible. Quitá las observaciones y referencias, o elegí retiro si el envío está pendiente de cotización. También podés consultar al comercio por WhatsApp.']
+    ...(deliveryQuoteRequiresV2
+      ? ['Este emprendimiento todavía no informó un costo de envío. Elegí retiro o consultá el valor por WhatsApp antes de confirmar.']
+      : []),
+    ...(!deliveryQuoteRequiresV2 && hasCheckoutNotes && !isOrderCheckoutV2Enabled
+      ? ['Las observaciones y referencias estarán disponibles cuando se habilite el checkout V2. Por ahora, consultalas por WhatsApp.']
       : []),
   ];
   const canOrder = canPlaceOrder &&
