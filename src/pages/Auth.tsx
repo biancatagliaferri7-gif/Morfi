@@ -29,6 +29,8 @@ function messageFor(error: unknown) {
   if (/invalid email|email address.*invalid|unable to validate email/i.test(message)) return 'El correo electrónico no tiene un formato válido. Revisá que esté escrito correctamente.';
   if (/email not confirmed/i.test(message)) return 'Confirmá tu correo desde el enlace que te enviamos antes de ingresar.';
   if (/already registered|already exists|user already registered/i.test(message) || code === 'user_already_exists') return 'Ese correo ya tiene una cuenta. Elegí “Ingresar” para continuar.';
+  if (code === 'email_address_not_authorized') return 'MORFI todavía no puede enviar correos a esta dirección. Avisá al equipo para que configure el envío de correos.';
+  if (code === 'over_email_send_rate_limit') return 'MORFI alcanzó el límite de correos por ahora. Intentá reenviar la confirmación más tarde.';
   if (/morfi_profiles_dni_unique|duplicate key.*dni/i.test(message)) return 'Ya existe una cuenta emprendedora registrada con ese DNI.';
   const passwordAdvice = passwordErrorMessage(error);
   if (passwordAdvice) return passwordAdvice;
@@ -318,11 +320,12 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
           navigate(returnTo, { replace: true });
         } else {
           setCanResendVerification(true);
+          const confirmationHelp = 'Revisá tu correo y la carpeta de spam para confirmar la cuenta. Si no llega, usá “Reenviar correo de verificación”. Si esa dirección ya tenía cuenta, elegí “Ingresar” o recuperá tu contraseña.';
           setNotice(profileType === 'emprendimiento' && pendingSetupSaved
-            ? 'Te enviamos un correo para confirmar tu cuenta. Al ingresar por primera vez, el logo o la ubicación que elegiste se guardarán automáticamente en tu emprendimiento.'
+            ? `${confirmationHelp} Al ingresar por primera vez, el logo o la ubicación que elegiste se guardarán automáticamente en tu emprendimiento.`
             : profileType === 'emprendimiento' && hasPendingSetup
-              ? 'Te enviamos un correo para confirmar tu cuenta. No se pudo guardar el logo o la ubicación en este navegador; podés agregarlos más adelante desde tu panel.'
-            : 'Te enviamos un correo para confirmar tu cuenta. Abrí el enlace y después ingresá con tu correo y contraseña.');
+              ? `${confirmationHelp} No se pudo guardar el logo o la ubicación en este navegador; podés agregarlos más adelante desde tu panel.`
+            : confirmationHelp);
         }
       } else if (mode === 'login') {
         const { data, error } = await supabase.auth.signInWithPassword({
