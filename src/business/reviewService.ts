@@ -1,4 +1,5 @@
 import { supabase, publicSupabase } from '../lib/supabaseClient';
+export { isReviewSchemaUnavailable } from './reviewErrors';
 
 export type RatingSummary = {
   average_rating: number;

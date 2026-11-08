@@ -4,7 +4,7 @@ import { useAuth } from '../AuthContext';
 import { supabase } from '../lib/supabaseClient';
 import { listPublishedBusinessCatalog } from '../business/publicCatalogService';
 import type { PublicBusinessCatalog } from '../business/publicCatalogService';
-import { listBusinessReviews } from '../business/reviewService';
+import { isReviewSchemaUnavailable, listBusinessReviews } from '../business/reviewService';
 import type { PublicReview } from '../business/reviewService';
 import BusinessLocationMap from '../components/BusinessLocationMap';
 import {
@@ -305,7 +305,9 @@ export default function Hungry() {
         const detail = error instanceof Error ? error.message : 'Error inesperado.';
         if (active) {
           setBusinessReviews([]);
-          setBusinessReviewsError(`No se pudieron cargar las opiniones: ${detail}`);
+          setBusinessReviewsError(isReviewSchemaUnavailable(error)
+            ? 'Las opiniones todavía no están habilitadas para este emprendimiento.'
+            : `No se pudieron cargar las opiniones: ${detail}`);
         }
       } finally {
         if (active) setBusinessReviewsLoading(false);
