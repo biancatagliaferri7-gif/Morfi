@@ -239,6 +239,7 @@ create table public.morfi_suppliers (
   phone_is_public boolean not null default false,
   email_is_public boolean not null default false,
   is_published boolean not null default false,
+  show_in_market boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -900,6 +901,8 @@ create table public.morfi_orders (
   id uuid primary key default gen_random_uuid(),
   customer_id uuid not null references public.morfi_profiles(id) on delete restrict,
   business_id uuid not null references public.morfi_businesses(id) on delete restrict,
+  customer_name text,
+  customer_phone text,
   request_key uuid not null,
   request_fingerprint text not null,
   status public.morfi_order_status not null default 'pending',
@@ -919,6 +922,27 @@ create table public.morfi_orders (
     or (delivery_mode = 'pickup' and delivery_address is null)
   )
 );
+
+create or replace function public.morfi_capture_order_customer_contact()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  select profile.full_name, profile.phone
+  into new.customer_name, new.customer_phone
+  from public.morfi_profiles profile
+  where profile.id = new.customer_id;
+  return new;
+end
+$$;
+
+revoke all on function public.morfi_capture_order_customer_contact() from public, anon, authenticated;
+
+create trigger morfi_order_customer_contact
+before insert on public.morfi_orders
+for each row execute function public.morfi_capture_order_customer_contact();
 
 create table public.morfi_order_items (
   id uuid primary key default gen_random_uuid(),
@@ -1510,7 +1534,6 @@ create or replace function public.morfi_create_order(
   p_delivery_mode text,
   p_delivery_address text,
   p_payment_method text,
-  p_request_key uuid,
   p_request_key uuid
 )
 returns uuid
@@ -1975,6 +1998,31 @@ from public.morfi_suppliers s
 join public.morfi_supplier_products p on p.supplier_id = s.id
 where s.is_published and p.is_available;
 
+create or replace view public.morfi_public_market_catalog
+with (security_invoker = true, security_barrier = true)
+as
+select
+  s.id as supplier_id,
+  p.id as product_id,
+  s.name as supplier_name,
+  s.description as supplier_description,
+  s.logo_path,
+  s.zone,
+  p.name as product_name,
+  p.description as product_description,
+  p.category,
+  p.comparison_key,
+  p.sale_unit,
+  p.image_path,
+  p.price,
+  p.is_available,
+  p.accepts_delivery,
+  p.payment_methods,
+  p.cash_discount_percent
+from public.morfi_suppliers s
+join public.morfi_supplier_products p on p.supplier_id = s.id
+where s.is_published and s.show_in_market and p.is_available;
+
 -- Contact data is returned only through these publication/consent-checked RPCs.
 create or replace function public.morfi_public_business_contact(p_business_id uuid)
 returns table (
@@ -2087,11 +2135,11 @@ grant select, insert, update on public.morfi_businesses to authenticated;
 grant select on public.morfi_business_memberships to authenticated;
 grant select, delete on public.morfi_business_products to authenticated;
 grant insert (
-  business_id, name, description, image_path, price, is_available,
+  business_id, name, description, image_path, price, stock_quantity, is_available,
   accepts_delivery, payment_methods, cash_discount_percent, recipe_id
 ) on public.morfi_business_products to authenticated;
 grant update (
-  name, description, image_path, price, is_available, accepts_delivery,
+  name, description, image_path, price, stock_quantity, is_available, accepts_delivery,
   payment_methods, cash_discount_percent
 ) on public.morfi_business_products to authenticated;
 grant select, insert, update on public.morfi_suppliers to authenticated;
@@ -2123,7 +2171,8 @@ grant select on public.morfi_purchases, public.morfi_purchase_items,
   public.morfi_sales to authenticated;
 
 grant select on public.morfi_public_business_catalog,
-  public.morfi_public_supplier_catalog to anon, authenticated;
+  public.morfi_public_supplier_catalog,
+  public.morfi_public_market_catalog to anon, authenticated;
 
 create policy "profiles_select_own"
 on public.morfi_profiles for select to authenticated

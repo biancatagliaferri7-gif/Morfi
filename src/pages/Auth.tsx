@@ -7,12 +7,6 @@ import { useAuth } from '../AuthContext';
 type AuthMode = 'login' | 'register' | 'recover';
 type Panel = 'cliente' | 'emprendimiento' | 'ahorro';
 
-const panels: { id: Panel; label: string }[] = [
-  { id: 'cliente', label: 'Tengo hambre (cliente)' },
-  { id: 'emprendimiento', label: 'Mi emprendimiento' },
-  { id: 'ahorro', label: 'MORFI Ahorro' },
-];
-
 const inputClass = 'mt-1 w-full rounded-xl border border-gray-300 bg-white p-3 text-base font-normal';
 
 function messageFor(error: unknown) {
@@ -30,16 +24,10 @@ function messageFor(error: unknown) {
 export default function Auth({ initialMode }: { initialMode: AuthMode }) {
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [email, setEmail] = useState('');
-  const [dni, setDni] = useState('');
   const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [panelsSelected, setPanelsSelected] = useState<Panel[]>(['cliente']);
-  const [alias, setAlias] = useState('');
-  const [holder, setHolder] = useState('');
-  const [location, setLocation] = useState('');
-  const [directions, setDirections] = useState('');
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [notice, setNotice] = useState('');
@@ -78,35 +66,19 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
     setNotice('');
     try {
       if (mode === 'register') {
-        if (!/^\d{7,10}$/.test(dni.replace(/\D/g, ''))) throw new Error('DNI inválido');
-        if (!/^\+[1-9]\d{7,14}$/.test(phone.trim())) throw new Error('Teléfono inválido');
-        if (!name.trim() || password.length < 8 || panelsSelected.length === 0) throw new Error('Datos de registro incompletos');
+        if (!name.trim() || password.length < 8) throw new Error('Datos de registro incompletos');
         if (
           name.trim().length > 120 ||
           email.trim().length > 254 ||
-          password.length > 72 ||
-          phone.trim().length > 16 ||
-          alias.trim().length > 120 ||
-          holder.trim().length > 120 ||
-          location.trim().length > 180 ||
-          directions.trim().length > 300
+          password.length > 72
         ) throw new Error('Algún dato supera el largo permitido');
-        if (panelsSelected.some(panel => panel !== 'cliente') && (!alias.trim() || !holder.trim() || !location.trim())) {
-          throw new Error('Faltan datos del panel vendedor');
-        }
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
           options: {
             data: {
               full_name: name.trim(),
-              dni: dni.replace(/\D/g, ''),
-              phone: phone.trim(),
               enabled_panels: panelsSelected,
-              seller_alias: alias.trim() || null,
-              seller_holder: holder.trim() || null,
-              seller_location: location.trim() || null,
-              seller_directions: directions.trim() || null,
             },
             emailRedirectTo: `${window.location.origin}/login`,
           },
@@ -145,11 +117,8 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
       }
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : '';
-      if (/DNI inválido/.test(message)) setErrorMessage('Ingresá un DNI válido, solo con números.');
-      else if (/Teléfono inválido/.test(message)) setErrorMessage('Ingresá un teléfono con código de país; por ejemplo, +5492611234567.');
-      else if (/Datos de registro incompletos/.test(message)) setErrorMessage('Completá tu nombre, elegí al menos un panel y usá una contraseña de 8 caracteres o más.');
-      else if (/Faltan datos/.test(message)) setErrorMessage('Para habilitar un panel vendedor, completá alias/CVU, titular y zona o dirección del local.');
-      else if (/largo permitido/.test(message)) setErrorMessage('Revisá los largos: nombre/titular/alias hasta 120, teléfono hasta 16, ubicación hasta 180, indicaciones hasta 300 y contraseña hasta 72 caracteres.');
+      if (/Datos de registro incompletos/.test(message)) setErrorMessage('Completá tu nombre y elegí una contraseña de al menos 8 caracteres.');
+      else if (/largo permitido/.test(message)) setErrorMessage('El nombre admite hasta 120 caracteres y la contraseña hasta 72.');
       else if (/DNI|unique/i.test(message)) setErrorMessage('Ese DNI ya está registrado o no es válido. Revisá el número.');
       else setErrorMessage(messageFor(caught));
     } finally {
@@ -167,10 +136,10 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
     }
   }
 
-  function togglePanel(panel: Panel) {
-    setPanelsSelected(current => current.includes(panel)
-      ? current.filter(value => value !== panel)
-      : [...current, panel]);
+  function toggleSellerPanel() {
+    setPanelsSelected(current => current.includes('emprendimiento')
+      ? ['cliente']
+      : ['cliente', 'emprendimiento']);
   }
 
   const recoveryForm = mode === 'recover' && session;
@@ -192,7 +161,7 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
         <p className="mt-2 text-sm text-gray-600">
           {session && !recoveryForm
             ? `Sesión iniciada${profile?.full_name ? ` para ${profile.full_name}` : ''}.`
-            : 'Usá tu correo electrónico y contraseña para acceder a tu cuenta.'}
+            : 'Usá tu correo y contraseña. Solo te pedimos los datos necesarios para empezar.'}
         </p>
         {!configured && <p role="alert" className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Falta configurar Supabase con VITE_SUPABASE_URL y VITE_SUPABASE_PUBLISHABLE_KEY. No se puede iniciar sesión todavía.</p>}
         {session && !recoveryForm && <button type="button" onClick={() => void handleSignOut()} className="mt-4 rounded-xl border px-4 py-3 font-bold">Cerrar sesión</button>}
@@ -205,20 +174,9 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
         {!session || recoveryForm ? (
           <form onSubmit={submit} className="mt-5 space-y-4">
             {mode === 'register' && <>
-              <label className="block text-sm font-semibold">Nombre completo<input value={name} onChange={event => setName(event.target.value)} autoComplete="name" maxLength={120} className={inputClass} required /></label>
-              <label className="block text-sm font-semibold">DNI<input inputMode="numeric" value={dni} onChange={event => setDni(event.target.value)} className={inputClass} required /></label>
-              <label className="block text-sm font-semibold">Teléfono de contacto<input type="tel" value={phone} onChange={event => setPhone(event.target.value)} placeholder="+5492611234567" autoComplete="tel" className={inputClass} required /></label>
-              <fieldset className="rounded-xl border p-3">
-                <legend className="px-1 text-sm font-semibold">¿Qué paneles querés usar?</legend>
-                <div className="space-y-2">{panels.map(panel => <label key={panel.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={panelsSelected.includes(panel.id)} onChange={() => togglePanel(panel.id)} />{panel.label}</label>)}</div>
-              </fieldset>
-              {panelsSelected.some(panel => panel !== 'cliente') && <>
-                <p className="text-sm font-bold">Datos para Mi emprendimiento / MORFI Ahorro</p>
-                <label className="block text-sm font-semibold">Alias o CVU<input value={alias} onChange={event => setAlias(event.target.value)} maxLength={120} className={inputClass} required /></label>
-                <label className="block text-sm font-semibold">Nombre del titular<input value={holder} onChange={event => setHolder(event.target.value)} maxLength={120} className={inputClass} required /></label>
-                <label className="block text-sm font-semibold">Zona o dirección del local<input value={location} onChange={event => setLocation(event.target.value)} placeholder="Sur, centro, este, oeste o dirección" maxLength={180} className={inputClass} required /></label>
-                <label className="block text-sm font-semibold">Indicaciones para encontrar el local (opcional)<textarea value={directions} onChange={event => setDirections(event.target.value)} maxLength={300} className={inputClass} /></label>
-              </>}
+              <label className="block text-sm font-semibold">Nombre<input value={name} onChange={event => setName(event.target.value)} autoComplete="name" maxLength={120} className={inputClass} required /></label>
+              <label className="flex items-center gap-3 rounded-xl border border-[#E8C9AA] p-3 text-sm font-semibold"><input type="checkbox" checked={panelsSelected.includes('emprendimiento')} onChange={toggleSellerPanel} />También quiero vender en MORFI</label>
+              {panelsSelected.includes('emprendimiento') && <p className="rounded-xl bg-[#FFF3E5] p-3 text-sm text-[#77553C]">Después de crear tu cuenta podrás registrar tu emprendimiento y cargar el primer producto. Los datos de cobro y entrega se completan cuando los necesites.</p>}
             </>}
             {mode !== 'recover' && !recoveryForm && (
               <>

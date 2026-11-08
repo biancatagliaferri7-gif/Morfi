@@ -5,7 +5,21 @@ export type ManagedBusiness = {
   name: string;
   description: string;
   is_published: boolean;
+  is_open: boolean;
+  accepts_delivery: boolean;
+  accepts_pickup: boolean;
+  delivery_fee: number;
+  payment_methods: ('cash' | 'transfer')[];
+  contact_phone: string | null;
+  phone_is_public: boolean;
+  transfer_alias: string | null;
+  transfer_holder: string | null;
+  location: string | null;
+  directions: string | null;
 };
+
+const managedBusinessColumns =
+  'id, name, description, is_published, is_open, accepts_delivery, accepts_pickup, delivery_fee, payment_methods, contact_phone, phone_is_public, transfer_alias, transfer_holder, location, directions';
 
 export type BusinessProduct = {
   id: string;
@@ -23,7 +37,7 @@ export type BusinessProduct = {
 
 export type BusinessProductInput = Pick<
   BusinessProduct,
-  'name' | 'description' | 'image_path' | 'price' | 'is_available' |
+  'name' | 'description' | 'image_path' | 'price' | 'stock_quantity' | 'is_available' |
   'accepts_delivery' | 'payment_methods' | 'cash_discount_percent'
 >;
 
@@ -49,7 +63,7 @@ export async function listManagedBusinesses(userId: string): Promise<ManagedBusi
 
   const { data, error } = await client
     .from('morfi_businesses')
-    .select('id, name, description, is_published')
+    .select(managedBusinessColumns)
     .in('id', businessIds);
 
   if (error) throw error;
@@ -65,7 +79,7 @@ export async function createBusiness(
   const { data, error } = await client
     .from('morfi_businesses')
     .insert({ created_by: userId, name, description })
-    .select('id, name, description, is_published')
+    .select(managedBusinessColumns)
     .single();
 
   if (error) throw error;
@@ -80,9 +94,26 @@ export async function updateBusinessPublication(
     .from('morfi_businesses')
     .update({ is_published: isPublished })
     .eq('id', businessId)
-    .select('id, name, description, is_published')
+    .select(managedBusinessColumns)
     .single();
 
+  if (error) throw error;
+  return data;
+}
+
+export async function updateBusinessSettings(
+  businessId: string,
+  settings: Pick<ManagedBusiness,
+    'is_open' | 'accepts_delivery' | 'accepts_pickup' | 'delivery_fee' | 'payment_methods' |
+    'contact_phone' | 'phone_is_public' | 'transfer_alias' | 'transfer_holder' | 'location' | 'directions'
+  >,
+): Promise<ManagedBusiness> {
+  const { data, error } = await getSupabase()
+    .from('morfi_businesses')
+    .update(settings)
+    .eq('id', businessId)
+    .select(managedBusinessColumns)
+    .single();
   if (error) throw error;
   return data;
 }
@@ -140,4 +171,14 @@ export async function deleteBusinessProduct(businessId: string, productId: strin
     .eq('id', productId);
 
   if (error) throw error;
+}
+
+export async function uploadBusinessImage(businessId: string, file: File): Promise<string> {
+  const extension = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg';
+  const path = `businesses/${businessId}/products/${crypto.randomUUID()}.${extension}`;
+  const { error } = await getSupabase().storage
+    .from('morfi-catalog')
+    .upload(path, file, { contentType: file.type, upsert: false });
+  if (error) throw error;
+  return getSupabase().storage.from('morfi-catalog').getPublicUrl(path).data.publicUrl;
 }

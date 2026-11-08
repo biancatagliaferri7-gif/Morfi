@@ -13,11 +13,16 @@ import {
   listBusinessProducts,
   listManagedBusinesses,
   updateBusinessPublication,
+  updateBusinessSettings,
   updateBusinessProduct,
+  uploadBusinessImage,
 } from '../business/businessService';
 import type { BusinessProduct, BusinessProductInput } from '../business/businessService';
 import type { ManagedBusiness } from '../business/businessService';
 import type { Ingredient, Recipe } from '../business/types';
+import { listBusinessOrders, updateOrderStatus } from '../orders/orderService';
+import type { MorfiOrder, OrderStatus } from '../orders/orderService';
+import { nextVendorStatuses, orderSummary, statusLabel } from '../orders/orderPresentation';
 
 type Product = {
   id: number | string;
@@ -59,14 +64,6 @@ type IngredientDraft = {
   recipeQuantity: string;
 };
 
-type Order = {
-  id: string | number;
-  customer: string;
-  product: string;
-  total: number;
-  status: 'Pendiente' | 'Aceptado' | 'Preparando' | 'Listo para la entrega' | 'Entregado' | 'Rechazado';
-};
-
 const productTypes: { name: string; ingredients: string[] }[] = [
   { name: 'Lomitos', ingredients: ['Pan', 'Carne', 'Jamón', 'Queso', 'Huevo', 'Tomate', 'Lechuga'] },
   { name: 'Empanadas', ingredients: ['Tapas', 'Carne', 'Cebolla', 'Huevo', 'Condimentos'] },
@@ -80,20 +77,6 @@ const productTypes: { name: string; ingredients: string[] }[] = [
   { name: 'Otro', ingredients: [] },
 ];
 
-const initialOrders: Order[] = [
-  { id: 101, customer: 'Cliente demo 1', product: 'Milanesa con puré', total: 9500, status: 'Pendiente' },
-  { id: 102, customer: 'Cliente demo 2', product: 'Tarta de verduras', total: 8000, status: 'Preparando' },
-  { id: 103, customer: 'Cliente demo 3', product: 'Pollo al horno con papas', total: 10500, status: 'Entregado' },
-];
-
-const orderStatuses: Order['status'][] = [
-  'Pendiente',
-  'Aceptado',
-  'Preparando',
-  'Listo para la entrega',
-  'Entregado',
-  'Rechazado',
-];
 
 const defaultIngredientUnit: IngredientUnit = 'g';
 const ingredientUnits: { value: IngredientUnit; label: string }[] = [
@@ -132,31 +115,6 @@ function toProduct(product: BusinessProduct): Product {
   };
 }
 
-function loadData<T>(key: string, fallback: T): T {
-  try {
-    const saved = localStorage.getItem(key);
-    return saved ? JSON.parse(saved) as T : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function loadOrders(key: string): Order[] {
-  const saved = loadData<unknown>(key, initialOrders);
-  if (!Array.isArray(saved)) return initialOrders;
-  return saved.filter((value): value is Order => {
-    if (!value || typeof value !== 'object') return false;
-    const order = value as Record<string, unknown>;
-    return (
-      (typeof order.id === 'number' || typeof order.id === 'string') &&
-      typeof order.customer === 'string' &&
-      typeof order.product === 'string' &&
-      typeof order.total === 'number' &&
-      ['Pendiente', 'Aceptado', 'Preparando', 'Listo para la entrega', 'Entregado', 'Rechazado'].includes(String(order.status))
-    );
-  });
-}
-
 const money = (value: number) =>
   value.toLocaleString('es-AR', {
     style: 'currency',
@@ -176,9 +134,8 @@ function CostSummary({ label, value }: { label: string; value: number | null }) 
 export default function Business() {
   const { profile, session } = useAuth();
   const userId = session?.user.id;
-  const ordersStorageKey = 'morfi_business_orders';
   const [products, setProducts] = useState<Product[]>([]);
-  const [orders, setOrders] = useState<Order[]>(() => loadOrders(ordersStorageKey));
+  const [orders, setOrders] = useState<MorfiOrder[]>([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [productType, setProductType] = useState(productTypes[0].name);
@@ -196,10 +153,13 @@ export default function Business() {
   );
   const [customIngredient, setCustomIngredient] = useState('');
   const [productPhoto, setProductPhoto] = useState('');
+  const [productPhotoFile, setProductPhotoFile] = useState<File | null>(null);
+  const [stockQuantity, setStockQuantity] = useState('1');
   const photoInput = useRef<HTMLInputElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null);
   const [formError, setFormError] = useState('');
-  const [orderStorageError, setOrderStorageError] = useState('');
+  const [ordersError, setOrdersError] = useState('');
+  const [ordersReload, setOrdersReload] = useState(0);
   const [managedBusinesses, setManagedBusinesses] = useState<ManagedBusiness[]>([]);
   const [businessesLoading, setBusinessesLoading] = useState(true);
   const [businessesError, setBusinessesError] = useState('');
@@ -213,12 +173,26 @@ export default function Business() {
   const [publicationBusyId, setPublicationBusyId] = useState<string | null>(null);
   const [businessesReload, setBusinessesReload] = useState(0);
   const [selectedBusinessId, setSelectedBusinessId] = useState('');
+  const [businessOpen, setBusinessOpen] = useState(false);
+  const [businessAcceptsDelivery, setBusinessAcceptsDelivery] = useState(false);
+  const [businessAcceptsPickup, setBusinessAcceptsPickup] = useState(true);
+  const [businessDeliveryFee, setBusinessDeliveryFee] = useState('0');
+  const [businessPaymentMethods, setBusinessPaymentMethods] = useState<('cash' | 'transfer')[]>(['cash']);
+  const [businessPhone, setBusinessPhone] = useState('');
+  const [businessPhonePublic, setBusinessPhonePublic] = useState(false);
+  const [businessTransferAlias, setBusinessTransferAlias] = useState('');
+  const [businessTransferHolder, setBusinessTransferHolder] = useState('');
+  const [businessLocation, setBusinessLocation] = useState('');
+  const [businessDirections, setBusinessDirections] = useState('');
+  const [savingBusinessSettings, setSavingBusinessSettings] = useState(false);
+  const [businessSettingsNotice, setBusinessSettingsNotice] = useState('');
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsError, setProductsError] = useState('');
   const [productsNotice, setProductsNotice] = useState('');
   const [productsReload, setProductsReload] = useState(0);
   const [savingProduct, setSavingProduct] = useState(false);
   const [productActionId, setProductActionId] = useState<string | null>(null);
+  const [orderActionId, setOrderActionId] = useState<string | null>(null);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [tab, setTab] = useState<'productos' | 'pedidos' | BusinessSection>('productos');
   const packageFactor = (unit: IngredientUnit) => unit === 'kg' || unit === 'l' ? 1000 : 1;
@@ -250,6 +224,23 @@ export default function Business() {
       active = false;
     };
   }, [userId, businessesReload]);
+
+  useEffect(() => {
+    const business = managedBusinesses.find(item => item.id === selectedBusinessId);
+    if (!business) return;
+    setBusinessOpen(business.is_open);
+    setBusinessAcceptsDelivery(business.accepts_delivery);
+    setBusinessAcceptsPickup(business.accepts_pickup);
+    setBusinessDeliveryFee(String(business.delivery_fee));
+    setBusinessPaymentMethods(business.payment_methods);
+    setBusinessPhone(business.contact_phone ?? '');
+    setBusinessPhonePublic(business.phone_is_public);
+    setBusinessTransferAlias(business.transfer_alias ?? '');
+    setBusinessTransferHolder(business.transfer_holder ?? '');
+    setBusinessLocation(business.location ?? '');
+    setBusinessDirections(business.directions ?? '');
+    setBusinessSettingsNotice('');
+  }, [managedBusinesses, selectedBusinessId]);
 
   async function registerBusiness(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -308,6 +299,48 @@ export default function Business() {
     }
   }
 
+  async function saveBusinessSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const deliveryFee = Number(businessDeliveryFee);
+    const contactPhone = businessPhone.trim();
+    const transferAlias = businessTransferAlias.trim();
+    const transferHolder = businessTransferHolder.trim();
+    const location = businessLocation.trim();
+    const directions = businessDirections.trim();
+    if (!selectedBusinessId || !businessPaymentMethods.length || (!businessAcceptsPickup && !businessAcceptsDelivery) || !Number.isFinite(deliveryFee) || deliveryFee < 0) {
+      setBusinessFormError('Elegí retiro o entrega, al menos un medio de pago y una tarifa de entrega válida.');
+      return;
+    }
+    if (businessAcceptsPickup && !location) {
+      setBusinessFormError('Indicá dónde se retira el pedido o desmarcá retiro en el local.');
+      return;
+    }
+    if (businessPaymentMethods.includes('transfer') && (!transferAlias || !transferHolder)) {
+      setBusinessFormError('Para cobrar por transferencia, completá alias y titular.');
+      return;
+    }
+    setSavingBusinessSettings(true); setBusinessFormError(''); setBusinessSettingsNotice('');
+    try {
+      const updated = await updateBusinessSettings(selectedBusinessId, {
+        is_open: businessOpen,
+        accepts_delivery: businessAcceptsDelivery,
+        accepts_pickup: businessAcceptsPickup,
+        delivery_fee: businessAcceptsDelivery ? deliveryFee : 0,
+        payment_methods: businessPaymentMethods,
+        contact_phone: contactPhone || null,
+        phone_is_public: businessPhonePublic && Boolean(contactPhone),
+        transfer_alias: transferAlias || null,
+        transfer_holder: transferHolder || null,
+        location: location || null,
+        directions: directions || null,
+      });
+      setManagedBusinesses(current => current.map(item => item.id === updated.id ? updated : item));
+      setBusinessSettingsNotice('Configuración guardada. El catálogo usará estas opciones para el pedido.');
+    } catch (error) {
+      setBusinessFormError(`No se pudo guardar la configuración: ${error instanceof Error ? error.message : 'error inesperado.'}`);
+    } finally { setSavingBusinessSettings(false); }
+  }
+
   useEffect(() => {
     let active = true;
     async function loadProducts() {
@@ -338,19 +371,27 @@ export default function Business() {
   }, [selectedBusinessId, productsReload]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('morfi_business_orders', JSON.stringify(orders));
-      setOrderStorageError('');
-    } catch {
-      setOrderStorageError('No se pudieron guardar los cambios de pedidos en este navegador.');
+    let active = true;
+    async function loadOrders() {
+      if (!managedBusinesses.length) { setOrders([]); return; }
+      try {
+        setOrdersError('');
+        const data = await listBusinessOrders(managedBusinesses.map(business => business.id));
+        if (active) setOrders(data);
+      } catch (error) {
+        if (active) setOrdersError(`No se pudieron cargar los pedidos: ${error instanceof Error ? error.message : 'error inesperado.'}`);
+      }
     }
-  }, [orders]);
+    void loadOrders();
+    const refreshTimer = window.setInterval(() => { void loadOrders(); }, 30_000);
+    return () => { active = false; window.clearInterval(refreshTimer); };
+  }, [managedBusinesses, ordersReload]);
 
   const sales = orders
-    .filter(order => order.status === 'Entregado')
-    .reduce((sum, order) => sum + order.total, 0);
+    .filter(order => order.status === 'delivered')
+    .reduce((sum, order) => sum + Number(order.total), 0);
 
-  const pending = orders.filter(order => !['Entregado', 'Rechazado'].includes(order.status)).length;
+  const pending = orders.filter(order => !['delivered', 'rejected', 'cancelled'].includes(order.status)).length;
   const recipeYield = Number(yieldQuantity);
   const indirectCost = Number(additionalCosts);
   const rawMaterialCost = ingredientCosts.reduce((sum, item) => {
@@ -382,6 +423,7 @@ export default function Business() {
 
     const enteredPrice = price.trim() ? Number(price) : null;
     const amount = enteredPrice ?? (saleMode === 'cost' ? suggestedPrice : 0);
+    const stock = Number(stockQuantity);
     const completeRecipe = ingredientCosts.map(item => ({
       ...item,
       name: item.name.trim(),
@@ -395,6 +437,7 @@ export default function Business() {
       name.trim().length > 160 ||
       description.trim().length > 1000 ||
       !Number.isFinite(amount) || amount <= 0 ||
+      !Number.isInteger(stock) || stock < 0 ||
       paymentMethods.length === 0 ||
       (cashDiscountPercent.trim() !== '' && (
         !Number.isFinite(Number(cashDiscountPercent)) ||
@@ -420,7 +463,7 @@ export default function Business() {
         )
       ))
     ) {
-      setFormError('Completá el producto, el precio y los datos de cada ingrediente. Revisá que las unidades sean compatibles.');
+      setFormError('Completá el producto, el precio y el stock disponible. Revisá los datos de cada ingrediente y sus unidades.');
       return;
     }
     if (!selectedBusinessId) {
@@ -504,11 +547,21 @@ export default function Business() {
         return;
       }
     }
+    let imagePath = productPhoto || null;
+    if (productPhotoFile) {
+      try {
+        imagePath = await uploadBusinessImage(selectedBusinessId, productPhotoFile);
+      } catch (error) {
+        setFormError(`No se pudo subir la foto: ${error instanceof Error ? error.message : 'error inesperado.'}`);
+        return;
+      }
+    }
     const productInput: BusinessProductInput = {
       name: name.trim(),
       description: description.trim(),
-      image_path: productPhoto || null,
+      image_path: imagePath,
       price: amount,
+      stock_quantity: stock,
       is_available: isAvailable,
       accepts_delivery: acceptsDelivery,
       payment_methods: paymentMethods,
@@ -549,6 +602,8 @@ export default function Business() {
     setCustomIngredient('');
     setCustomProductType('');
     setProductPhoto('');
+    setProductPhotoFile(null);
+    setStockQuantity('1');
     setEditingProductId(null);
     if (photoInput.current) photoInput.current.value = '';
     if (cameraInput.current) cameraInput.current.value = '';
@@ -559,8 +614,8 @@ export default function Business() {
   function loadProductPhoto(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 400 * 1024) {
-      setFormError('La foto debe ser JPG, PNG o WebP de hasta 400 KB para poder guardarla en este navegador.');
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 2 * 1024 * 1024) {
+      setFormError('La foto debe ser JPG, PNG o WebP de hasta 2 MB. Se guardará en el catálogo, no dentro del producto.');
       event.target.value = '';
       return;
     }
@@ -568,6 +623,7 @@ export default function Business() {
     reader.onload = () => {
       if (typeof reader.result === 'string') {
         setProductPhoto(reader.result);
+        setProductPhotoFile(file);
         setFormError('');
       } else {
         setFormError('No se pudo leer la foto seleccionada.');
@@ -587,6 +643,8 @@ export default function Business() {
     setPaymentMethods(product.paymentMethods?.length ? product.paymentMethods : ['cash']);
     setCashDiscountPercent(product.cashDiscountPercent == null ? '' : String(product.cashDiscountPercent));
     setProductPhoto(product.image ?? '');
+    setProductPhotoFile(null);
+    setStockQuantity(String(product.quantity ?? 0));
     setSaleMode('direct');
     setFormError('');
     document.getElementById('product-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -629,12 +687,17 @@ export default function Business() {
     }
   }
 
-  function updateStatus(id: string | number, status: Order['status']) {
-    setOrders(current =>
-      current.map(order =>
-        order.id === id ? { ...order, status } : order
-      )
-    );
+  async function updateStatus(order: MorfiOrder, status: OrderStatus) {
+    setOrderActionId(order.id);
+    setOrdersError('');
+    try {
+      await updateOrderStatus(order.id, status);
+      setOrders(current => current.map(item => item.id === order.id ? { ...item, status } : item));
+    } catch (error) {
+      setOrdersError(`No se pudo actualizar el pedido: ${error instanceof Error ? error.message : 'error inesperado.'}`);
+    } finally {
+      setOrderActionId(null);
+    }
   }
 
   return (
@@ -649,7 +712,7 @@ export default function Business() {
 
         <div className="mb-8">
           <span className="text-sm font-bold text-green-700">
-            MORFI · PANEL DEMOSTRATIVO
+            MORFI · PANEL DE VENTAS
           </span>
           <h1 className="text-3xl md:text-4xl font-black mt-2">
             Mi emprendimiento
@@ -770,8 +833,29 @@ export default function Business() {
             </select>
           </label>
           <p className="mt-2 text-xs text-gray-600">
-            El stock se consulta desde Supabase, pero la migración actual no concede permisos al cliente para modificar stock_quantity.
+            El stock inicial se carga al crear o editar un producto. Los pedidos y la producción lo actualizan de forma controlada.
           </p>
+          {selectedBusinessId && <form onSubmit={event => void saveBusinessSettings(event)} className="mt-5 rounded-xl border border-[#F2DDCA] bg-[#FFF9F2] p-4">
+            <h3 className="font-bold">Cómo vendés hoy</h3>
+            <p className="mt-1 text-sm text-gray-600">Marcá estas opciones antes de publicar. Así el cliente ve solo lo que realmente ofrecés.</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={businessOpen} onChange={event => setBusinessOpen(event.target.checked)} />Estoy tomando pedidos</label>
+              <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={businessAcceptsPickup} onChange={event => setBusinessAcceptsPickup(event.target.checked)} />Retiro en el local</label>
+              <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={businessAcceptsDelivery} onChange={event => setBusinessAcceptsDelivery(event.target.checked)} />Entrega a domicilio</label>
+              <label className="text-sm font-semibold">Costo de entrega<input type="number" min="0" step="0.01" disabled={!businessAcceptsDelivery} value={businessDeliveryFee} onChange={event => setBusinessDeliveryFee(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-normal disabled:bg-gray-100" /></label>
+            </div>
+            <fieldset className="mt-3"><legend className="text-sm font-semibold">Cobrás con</legend>{(['cash', 'transfer'] as const).map(method => <label key={method} className="mr-4 inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={businessPaymentMethods.includes(method)} onChange={event => setBusinessPaymentMethods(current => event.target.checked ? [...current, method] : current.filter(value => value !== method))} />{method === 'cash' ? 'Efectivo' : 'Transferencia'}</label>)}</fieldset>
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <label className="text-sm font-semibold">Dirección o punto de retiro{businessAcceptsPickup ? ' *' : ''}<input value={businessLocation} onChange={event => setBusinessLocation(event.target.value)} maxLength={180} placeholder="Ej.: Barrio Centro, La Rioja" className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-normal" /></label>
+              <label className="text-sm font-semibold">Indicaciones para llegar<input value={businessDirections} onChange={event => setBusinessDirections(event.target.value)} maxLength={300} placeholder="Ej.: Portón verde, timbre 2" className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-normal" /></label>
+              <label className="text-sm font-semibold">Teléfono para consultas<input type="tel" value={businessPhone} onChange={event => setBusinessPhone(event.target.value)} maxLength={40} placeholder="Ej.: 3804 123456" className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-normal" /></label>
+              <label className="flex items-center gap-2 self-end text-sm font-semibold"><input type="checkbox" checked={businessPhonePublic} disabled={!businessPhone.trim()} onChange={event => setBusinessPhonePublic(event.target.checked)} />Mostrar teléfono al público</label>
+              {businessPaymentMethods.includes('transfer') && <><label className="text-sm font-semibold">Alias para transferir *<input value={businessTransferAlias} onChange={event => setBusinessTransferAlias(event.target.value)} maxLength={120} className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-normal" /></label><label className="text-sm font-semibold">Titular de la cuenta *<input value={businessTransferHolder} onChange={event => setBusinessTransferHolder(event.target.value)} maxLength={120} className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-normal" /></label></>}
+            </div>
+            <p className="mt-2 text-xs text-gray-600">El alias y titular se muestran solo si aceptás transferencia. El teléfono se publica únicamente si lo marcás.</p>
+            {businessSettingsNotice && <p role="status" className="mt-3 rounded-lg bg-green-50 p-3 text-sm font-semibold text-green-800">{businessSettingsNotice}</p>}
+            <button disabled={savingBusinessSettings} className="mt-4 rounded-xl bg-[#8B3F14] px-5 py-3 font-bold text-white disabled:opacity-60">{savingBusinessSettings ? 'Guardando…' : 'Guardar cómo vendés'}</button>
+          </form>}
         </section>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
@@ -875,6 +959,8 @@ export default function Business() {
                       setDescription('');
                       setPrice('');
                       setProductPhoto('');
+                      setProductPhotoFile(null);
+                      setStockQuantity('1');
                       setIsAvailable(true);
                       setAcceptsDelivery(false);
                       setPaymentMethods(['cash']);
@@ -967,6 +1053,19 @@ export default function Business() {
                   className="border border-gray-300 rounded-xl p-3"
                   required={saleMode === 'direct'}
                 />
+                <label className="text-sm font-semibold">
+                  Stock disponible
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={stockQuantity}
+                    onChange={event => setStockQuantity(event.target.value)}
+                    aria-label="Stock disponible"
+                    className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
+                    required
+                  />
+                </label>
                 {saleMode === 'cost' && (
                   <button
                     type="button"
@@ -1017,7 +1116,7 @@ export default function Business() {
               </div>
 
               <div className="mt-4">
-                <p className="text-sm font-semibold">Foto del producto (opcional, hasta 400 KB)</p>
+                <p className="text-sm font-semibold">Foto del producto (opcional, hasta 2 MB)</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <button type="button" onClick={() => cameraInput.current?.click()} className="rounded-lg border px-3 py-2 text-sm font-semibold">Sacar foto</button>
                   <button type="button" onClick={() => photoInput.current?.click()} className="rounded-lg border px-3 py-2 text-sm font-semibold">Elegir de galería</button>
@@ -1258,62 +1357,32 @@ export default function Business() {
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100">
             <h2 className="text-xl font-black mb-2">Gestión de pedidos</h2>
             <p className="text-gray-500 mb-6">
-              Aceptá o rechazá pedidos y actualizá el estado para que el cliente sepa cómo va.
+              Aceptá o rechazá pedidos y actualizá el estado para que el cliente sepa cómo va. La lista se actualiza cada 30 segundos.
             </p>
-            {orderStorageError && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm font-semibold text-red-800">{orderStorageError}</p>}
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <button type="button" onClick={() => setOrdersReload(current => current + 1)} className="rounded-lg border border-[#8B3F14] px-4 py-2 text-sm font-bold">Actualizar pedidos</button>
+              {ordersError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm font-semibold text-red-800">{ordersError}</p>}
+            </div>
 
             <div className="space-y-4">
+              {orders.length === 0 && <p className="text-gray-600">Todavía no recibiste pedidos.</p>}
               {orders.map(order => (
                 <div
                   key={order.id}
                   className="border border-gray-200 rounded-xl p-4 flex flex-wrap justify-between gap-4"
                 >
                   <div>
-                    <p className="font-black">Pedido #{order.id}</p>
-                    <p>{order.customer}</p>
-                    <p className="text-gray-600">{order.product}</p>
-                    <p className="font-bold mt-2">{money(order.total)}</p>
+                    <p className="font-black">Pedido #{order.id.slice(0, 8)}</p>
+                    <p>{order.customer_name || 'Cliente MORFI'}{order.customer_phone ? ` · ${order.customer_phone}` : ''}</p>
+                    <p className="text-gray-600">{orderSummary(order)}</p>
+                    <p className="text-sm text-gray-600">{order.delivery_mode === 'delivery' ? `Entrega: ${order.delivery_address}` : 'Retiro en el local'} · {order.payment_method === 'cash' ? 'Efectivo' : 'Transferencia'}</p>
+                    <p className="font-bold mt-2">{money(Number(order.total))}</p>
                   </div>
 
                   <div>
-                    <label
-                      htmlFor={`status-${order.id}`}
-                      className="block text-sm font-semibold mb-2"
-                    >
-                      Estado del pedido
-                    </label>
-
-                    {order.status === 'Pendiente' && (
-                      <div className="mb-3 flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => updateStatus(order.id, 'Aceptado')}
-                          className="rounded-lg bg-green-700 px-4 py-2 font-bold text-white"
-                        >
-                          Aceptar pedido
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => updateStatus(order.id, 'Rechazado')}
-                          className="rounded-lg border border-red-300 px-4 py-2 font-bold text-red-700"
-                        >
-                          Rechazar pedido
-                        </button>
-                      </div>
-                    )}
-                    <select
-                      id={`status-${order.id}`}
-                      value={order.status}
-                      onChange={event =>
-                        updateStatus(
-                          order.id,
-                          event.target.value as Order['status'],
-                        )
-                      }
-                      className="border border-gray-300 rounded-xl p-3 bg-white"
-                    >
-                      {orderStatuses.map(status => <option key={status} value={status}>{status === 'Aceptado' ? 'Recibido y aceptado' : status === 'Preparando' ? 'En preparación' : status === 'Listo para la entrega' ? 'Listo para la entrega' : status}</option>)}
-                    </select>
+                    <p className="mb-2 text-sm font-semibold">Estado del pedido</p>
+                    <p className="rounded-lg bg-gray-100 px-3 py-2 text-sm font-semibold">{statusLabel[order.status]}</p>
+                    {nextVendorStatuses(order).map(nextStatus => <button key={nextStatus} type="button" disabled={orderActionId === order.id} onClick={() => void updateStatus(order, nextStatus)} className={`mt-2 w-full rounded-lg px-3 py-2 text-sm font-bold disabled:opacity-50 ${nextStatus === 'rejected' ? 'border border-red-300 text-red-700' : nextStatus === 'accepted' ? 'bg-green-700 text-white' : 'border border-[#8B3F14]'}`}>{nextStatus === 'accepted' ? 'Aceptar pedido' : nextStatus === 'rejected' ? 'Rechazar pedido' : `Marcar como ${statusLabel[nextStatus].toLocaleLowerCase('es')}`}</button>)}
                   </div>
                 </div>
               ))}
@@ -1328,8 +1397,7 @@ export default function Business() {
         )}
 
         <p className="text-center text-gray-500 text-sm mt-10">
-          MORFI Demo · Datos guardados en este navegador.
-          No representa ventas ni pedidos reales.
+          MORFI · Productos y pedidos se guardan en Supabase. Costos, recetas y producción siguen disponibles como herramientas opcionales.
         </p>
       </div>
     </main>

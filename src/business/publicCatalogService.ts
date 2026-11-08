@@ -40,6 +40,27 @@ export type PublicBusinessCatalog = {
   contact: PublicBusinessContact | null;
 };
 
+type PublicBusinessCatalogRow = {
+  business_id: string;
+  business_name: string;
+  business_description: string;
+  logo_path: string | null;
+  business_accepts_delivery: boolean;
+  accepts_pickup: boolean;
+  delivery_fee: number;
+  business_payment_methods: ('cash' | 'transfer')[];
+  is_open: boolean;
+  product_id: string;
+  product_name: string;
+  product_description: string;
+  image_path: string | null;
+  price: number;
+  is_available: boolean;
+  accepts_delivery: boolean;
+  payment_methods: ('cash' | 'transfer')[];
+  cash_discount_percent: number | null;
+};
+
 function getSupabase() {
   if (!publicSupabase) {
     throw new Error('Supabase no está configurado. Revisá las variables públicas de conexión.');
@@ -49,23 +70,15 @@ function getSupabase() {
 
 export async function listPublishedBusinessCatalog(): Promise<PublicBusinessCatalog[]> {
   const client = getSupabase();
-  const { data: businesses, error: businessesError } = await client
-    .from('morfi_businesses')
-    .select('id, name, description, logo_path, accepts_delivery, accepts_pickup, delivery_fee, payment_methods, is_open')
-    .eq('is_published', true)
-    .order('name');
+  const { data, error } = await client
+    .from('morfi_public_business_catalog')
+    .select('business_id, business_name, business_description, logo_path, business_accepts_delivery, accepts_pickup, delivery_fee, business_payment_methods, is_open, product_id, product_name, product_description, image_path, price, is_available, accepts_delivery, payment_methods, cash_discount_percent')
+    .order('business_name') as { data: PublicBusinessCatalogRow[] | null; error: Error | null };
 
-  if (businessesError) throw businessesError;
-  if (!businesses.length) return [];
+  if (error) throw error;
+  if (!data?.length) return [];
 
-  const businessIds = businesses.map(business => business.id);
-  const { data: products, error: productsError } = await client
-    .from('morfi_business_products')
-    .select('id, business_id, name, description, image_path, price, is_available, accepts_delivery, payment_methods, cash_discount_percent')
-    .in('business_id', businessIds)
-    .eq('is_available', true);
-
-  if (productsError) throw productsError;
+  const businessIds = [...new Set(data.map(row => row.business_id))];
 
   const contacts = await Promise.all(businessIds.map(async businessId => {
     const { data, error } = await client.rpc('morfi_public_business_contact', {
@@ -75,17 +88,36 @@ export async function listPublishedBusinessCatalog(): Promise<PublicBusinessCata
     return [businessId, data?.[0] ?? null] as const;
   }));
   const contactsByBusinessId = new Map(contacts);
-  const productsByBusinessId = new Map<string, PublicBusinessProduct[]>();
-
-  for (const product of products) {
-    const productList = productsByBusinessId.get(product.business_id) ?? [];
-    productList.push(product);
-    productsByBusinessId.set(product.business_id, productList);
+  const byBusiness = new Map<string, PublicBusinessCatalog>();
+  for (const row of data) {
+    const entry: PublicBusinessCatalog = byBusiness.get(row.business_id) ?? {
+      business: {
+        id: row.business_id,
+        name: row.business_name,
+        description: row.business_description,
+        logo_path: row.logo_path,
+        accepts_delivery: row.business_accepts_delivery,
+        accepts_pickup: row.accepts_pickup,
+        delivery_fee: row.delivery_fee,
+        payment_methods: row.business_payment_methods,
+        is_open: row.is_open,
+      },
+      products: [],
+      contact: contactsByBusinessId.get(row.business_id) ?? null,
+    };
+    entry.products.push({
+      id: row.product_id,
+      business_id: row.business_id,
+      name: row.product_name,
+      description: row.product_description,
+      image_path: row.image_path,
+      price: row.price,
+      is_available: row.is_available,
+      accepts_delivery: row.accepts_delivery,
+      payment_methods: row.payment_methods,
+      cash_discount_percent: row.cash_discount_percent,
+    });
+    byBusiness.set(row.business_id, entry);
   }
-
-  return businesses.map(business => ({
-    business,
-    products: productsByBusinessId.get(business.id) ?? [],
-    contact: contactsByBusinessId.get(business.id) ?? null,
-  }));
+  return [...byBusiness.values()];
 }
