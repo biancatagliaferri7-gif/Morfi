@@ -7,6 +7,7 @@ import { useAuth } from '../AuthContext';
 import { argentinePaymentProviders } from '../business/paymentOptions';
 import { removePendingBusinessSetup, savePendingBusinessSetup } from '../business/pendingRegistration';
 import BusinessLocationMap from '../components/BusinessLocationMap';
+import { passwordErrorMessage } from '../auth/passwordErrors';
 
 type AuthMode = 'login' | 'register' | 'recover';
 type ProfileType = 'cliente' | 'emprendimiento';
@@ -29,7 +30,8 @@ function messageFor(error: unknown) {
   if (/email not confirmed/i.test(message)) return 'Confirmá tu correo desde el enlace que te enviamos antes de ingresar.';
   if (/already registered|already exists|user already registered/i.test(message) || code === 'user_already_exists') return 'Ese correo ya tiene una cuenta. Elegí “Ingresar” para continuar.';
   if (/morfi_profiles_dni_unique|duplicate key.*dni/i.test(message)) return 'Ya existe una cuenta emprendedora registrada con ese DNI.';
-  if (/password.*(weak|short|breached|compromised|contain)|should be at least|password.*requirements/i.test(message)) return 'La contraseña no cumple los requisitos. Usá al menos 8 caracteres y revisá las indicaciones del campo.';
+  const passwordAdvice = passwordErrorMessage(error);
+  if (passwordAdvice) return passwordAdvice;
   if (/rate limit|too many requests/i.test(message)) return 'Se realizaron demasiados intentos. Esperá unos minutos e intentá de nuevo.';
   if (/email.*(smtp|provider|send)/i.test(message)) return 'No se pudo enviar el correo. Revisá que el proveedor Email y el envío de correos estén configurados en Supabase.';
   if (/database error saving new user/i.test(message) || code === 'database_error') {
@@ -577,13 +579,13 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
                 <label className="block text-sm font-semibold">
                   Contraseña
                   <span className="mt-1 flex rounded-xl border border-gray-300 bg-white">
-                    <input type={showPassword ? 'text' : 'password'} value={password} onChange={event => setPassword(event.target.value)} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} maxLength={72} className="min-w-0 flex-1 rounded-l-xl p-3 text-base font-normal outline-none" minLength={mode === 'register' ? 8 : undefined} required />
+                    <input type={showPassword ? 'text' : 'password'} value={password} onChange={event => setPassword(event.target.value)} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} maxLength={72} aria-describedby={mode === 'register' ? 'password-help' : undefined} className="min-w-0 flex-1 rounded-l-xl p-3 text-base font-normal outline-none" minLength={mode === 'register' ? 8 : undefined} required />
                     <button type="button" onClick={() => setShowPassword(visible => !visible)} aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'} className="flex items-center gap-1 px-3 text-sm font-semibold">
                       {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
                       {showPassword ? 'Ocultar' : 'Ver'}
                     </button>
                   </span>
-                  {mode === 'register' && <span className="mt-1 block text-xs font-normal text-gray-500">Debe tener entre 8 y 72 caracteres.</span>}
+                  {mode === 'register' && <span id="password-help" className="mt-1 block text-sm font-normal text-gray-600">Usá entre 8 y 72 caracteres. Combiná mayúsculas, minúsculas, números y un símbolo. Evitá tu DNI y contraseñas conocidas.</span>}
                 </label>
               </>
             )}
@@ -594,13 +596,13 @@ export default function Auth({ initialMode }: { initialMode: AuthMode }) {
                   <label className="block text-sm font-semibold">
                     Nueva contraseña
                     <span className="mt-1 flex rounded-xl border border-gray-300 bg-white">
-                      <input type={showNewPassword ? 'text' : 'password'} value={newPassword} onChange={event => setNewPassword(event.target.value)} autoComplete="new-password" maxLength={72} className="min-w-0 flex-1 rounded-l-xl p-3 text-base font-normal outline-none" minLength={8} required />
+                      <input type={showNewPassword ? 'text' : 'password'} value={newPassword} onChange={event => setNewPassword(event.target.value)} autoComplete="new-password" maxLength={72} aria-describedby="new-password-help" className="min-w-0 flex-1 rounded-l-xl p-3 text-base font-normal outline-none" minLength={8} required />
                       <button type="button" onClick={() => setShowNewPassword(visible => !visible)} aria-label={showNewPassword ? 'Ocultar nueva contraseña' : 'Mostrar nueva contraseña'} className="flex items-center gap-1 px-3 text-sm font-semibold">
                         {showNewPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
                         {showNewPassword ? 'Ocultar' : 'Ver'}
                       </button>
                     </span>
-                    <span className="mt-1 block text-xs font-normal text-gray-500">Debe tener entre 8 y 72 caracteres.</span>
+                    <span id="new-password-help" className="mt-1 block text-sm font-normal text-gray-600">Usá entre 8 y 72 caracteres con mayúsculas, minúsculas, números y un símbolo.</span>
                   </label>
                 )}
               </>

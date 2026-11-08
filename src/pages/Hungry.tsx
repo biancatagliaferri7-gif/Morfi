@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
+import { supabase } from '../lib/supabaseClient';
 import { listPublishedBusinessCatalog } from '../business/publicCatalogService';
 import type { PublicBusinessCatalog } from '../business/publicCatalogService';
 import { listBusinessReviews } from '../business/reviewService';
@@ -274,6 +275,17 @@ export default function Hungry() {
     setCustomerPhoneInput(profile?.phone ?? '');
   }, [profile?.id, profile?.phone]);
   useEffect(() => {
+    if (!profile?.id || !supabase) return;
+    let active = true;
+    const metadataPhone = profile.phone ?? '';
+    void supabase.from('morfi_profiles').select('phone').eq('id', profile.id).single()
+      .then(({ data, error }) => {
+        if (!active || error) return;
+        setCustomerPhoneInput(current => current === metadataPhone ? data.phone ?? '' : current);
+      });
+    return () => { active = false; };
+  }, [profile?.id, profile?.phone]);
+  useEffect(() => {
     let active = true;
     if (!selectedId || selectedKind !== 'business') {
       setBusinessReviews([]);
@@ -357,15 +369,11 @@ export default function Hungry() {
     businessWhatsappAvailable;
   const normalizedCustomerPhone = normalizeCustomerPhone(customerPhoneInput);
   const customerDetailsComplete = Boolean(profile?.full_name?.trim() && normalizedCustomerPhone);
-  const customerPhonePersistable = isOrderCheckoutV2Enabled ||
-    (normalizedCustomerPhone !== null &&
-      normalizedCustomerPhone === normalizeCustomerPhone(profile?.phone ?? ''));
   const checkoutV2Required = !isOrderCheckoutV2Enabled && (
     (delivery === 'delivery' && deliveryFee === null) ||
     Object.values(productNotes).some(note => note.trim()) ||
     orderNotes.trim().length > 0 ||
-    deliveryReferences.trim().length > 0 ||
-    !customerPhonePersistable
+    deliveryReferences.trim().length > 0
   );
   const checkoutBlockers = [
     ...(lines.length === 0 ? ['Agregá al menos un producto al carrito.'] : []),
@@ -385,12 +393,11 @@ export default function Hungry() {
       ? ['Ingresá un teléfono de cliente válido.']
       : []),
     ...(checkoutV2Required
-      ? ['Instalá la migración de checkout V2 en Supabase y habilitá VITE_MORFI_ORDER_CHECKOUT_V2=true para este despliegue.']
+      ? ['Esta opción todavía no está disponible. Quitá las observaciones y referencias, o elegí retiro si el envío está pendiente de cotización. También podés consultar al comercio por WhatsApp.']
       : []),
   ];
   const canOrder = canPlaceOrder &&
     customerDetailsComplete &&
-    customerPhonePersistable &&
     (isOrderCheckoutV2Enabled || (
       !Object.values(productNotes).some(note => note.trim()) &&
       !orderNotes.trim() &&
@@ -543,6 +550,19 @@ export default function Hungry() {
     let savedOrderId: string | null = null;
     let savedOrderNumber: number | null = null;
     try {
+      if (!isOrderCheckoutV2Enabled) {
+        if (!supabase) throw new Error('No hay conexión con Supabase. Intentá de nuevo.');
+        const { data, error } = await supabase
+          .from('morfi_profiles')
+          .update({ phone: customerPhone })
+          .eq('id', session.user.id)
+          .select('phone')
+          .single();
+        if (error || data?.phone !== customerPhone) {
+          console.error('No se pudo guardar el teléfono del cliente antes de crear el pedido:', error);
+          throw new Error('No pudimos guardar tu teléfono para el pedido. Intentá de nuevo.');
+        }
+      }
       const createdOrder = await createMealOrder({
         businessId: selected.id,
         customerPhone,
