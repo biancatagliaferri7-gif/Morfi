@@ -1,16 +1,23 @@
 import { publicSupabase } from '../lib/supabaseClient';
+import { isOrderCheckoutV2Enabled } from '../orders/orderService';
 
 export type PublicBusiness = {
   id: string;
   name: string;
   description: string;
   logo_path: string | null;
+  latitude: number | null;
+  longitude: number | null;
   accepts_delivery: boolean;
   accepts_pickup: boolean;
-  delivery_fee: number;
-  payment_methods: ('cash' | 'transfer')[];
+  delivery_fee: number | null;
+  delivery_fee_status: 'pending' | 'free' | 'fixed' | null;
   is_open: boolean;
+  average_rating: number | null;
+  review_count: number;
 };
+
+type PublicBusinessRow = Omit<PublicBusiness, 'average_rating' | 'review_count'>;
 
 export type PublicBusinessProduct = {
   id: string;
@@ -23,13 +30,13 @@ export type PublicBusinessProduct = {
   accepts_delivery: boolean;
   payment_methods: ('cash' | 'transfer')[];
   cash_discount_percent: number | null;
+  average_rating: number | null;
+  review_count: number;
 };
 
 export type PublicBusinessContact = {
   contact_phone: string | null;
   contact_email: string | null;
-  transfer_alias: string | null;
-  transfer_holder: string | null;
   location: string | null;
   directions: string | null;
 };
@@ -38,27 +45,6 @@ export type PublicBusinessCatalog = {
   business: PublicBusiness;
   products: PublicBusinessProduct[];
   contact: PublicBusinessContact | null;
-};
-
-type PublicBusinessCatalogRow = {
-  business_id: string;
-  business_name: string;
-  business_description: string;
-  logo_path: string | null;
-  business_accepts_delivery: boolean;
-  accepts_pickup: boolean;
-  delivery_fee: number;
-  business_payment_methods: ('cash' | 'transfer')[];
-  is_open: boolean;
-  product_id: string;
-  product_name: string;
-  product_description: string;
-  image_path: string | null;
-  price: number;
-  is_available: boolean;
-  accepts_delivery: boolean;
-  payment_methods: ('cash' | 'transfer')[];
-  cash_discount_percent: number | null;
 };
 
 function getSupabase() {
@@ -70,54 +56,116 @@ function getSupabase() {
 
 export async function listPublishedBusinessCatalog(): Promise<PublicBusinessCatalog[]> {
   const client = getSupabase();
-  const { data, error } = await client
-    .from('morfi_public_business_catalog')
-    .select('business_id, business_name, business_description, logo_path, business_accepts_delivery, accepts_pickup, delivery_fee, business_payment_methods, is_open, product_id, product_name, product_description, image_path, price, is_available, accepts_delivery, payment_methods, cash_discount_percent')
-    .order('business_name') as { data: PublicBusinessCatalogRow[] | null; error: Error | null };
+  let businesses: PublicBusinessRow[];
+  if (isOrderCheckoutV2Enabled) {
+    const result = await client
+      .from('morfi_businesses')
+      .select('id, name, description, logo_path, latitude, longitude, accepts_delivery, accepts_pickup, delivery_fee, is_open, delivery_fee_status')
+      .eq('is_published', true)
+      .order('name');
+    if (result.error) throw result.error;
+    businesses = result.data;
+  } else {
+    const result = await client
+      .from('morfi_businesses')
+      .select('id, name, description, logo_path, latitude, longitude, accepts_delivery, accepts_pickup, delivery_fee, is_open')
+      .eq('is_published', true)
+      .order('name');
+    if (result.error) throw result.error;
+    businesses = result.data.map(business => ({
+      ...business,
+      delivery_fee_status: null,
+    }));
+  }
+  if (!businesses.length) return [];
 
-  if (error) throw error;
-  if (!data?.length) return [];
+  const businessIds = businesses.map(business => business.id);
+  const { data: products, error: productsError } = await client
+    .from('morfi_business_products')
+    .select('id, business_id, name, description, image_path, price, is_available, accepts_delivery, payment_methods, cash_discount_percent')
+    .in('business_id', businessIds)
+    .eq('is_available', true);
 
-  const businessIds = [...new Set(data.map(row => row.business_id))];
+  if (productsError) throw productsError;
+
+  const [businessReviewsResult, productReviewsResult] = await Promise.all([
+    client.from('morfi_business_review_summary')
+      .select('business_id, average_rating, review_count')
+      .in('business_id', businessIds),
+    products.length > 0
+      ? client.from('morfi_product_review_summary')
+        .select('product_id, average_rating, review_count')
+        .in('product_id', products.map(product => product.id))
+      : Promise.resolve(null),
+  ]);
+  if (businessReviewsResult.error && businessReviewsResult.error.code !== 'PGRST205') {
+    throw businessReviewsResult.error;
+  }
+  if (productReviewsResult?.error && productReviewsResult.error.code !== 'PGRST205') {
+    throw productReviewsResult.error;
+  }
+  const businessReviewRows = businessReviewsResult.error ? [] : businessReviewsResult.data;
+  const productReviewRows = productReviewsResult?.error ? [] : productReviewsResult?.data ?? [];
+  const businessReviews = new Map(businessReviewRows.map(review => [
+    review.business_id,
+    {
+      average_rating: Number(review.average_rating),
+      review_count: review.review_count,
+    },
+  ]));
+  const productReviews = new Map(productReviewRows.map(review => [
+    review.product_id,
+    {
+      average_rating: Number(review.average_rating),
+      review_count: review.review_count,
+    },
+  ]));
 
   const contacts = await Promise.all(businessIds.map(async businessId => {
-    const { data, error } = await client.rpc('morfi_public_business_contact', {
+    const contactResult = await client.rpc('morfi_public_business_contact', {
       p_business_id: businessId,
     });
-    if (error) throw error;
-    return [businessId, data?.[0] ?? null] as const;
+    if (contactResult.error) throw contactResult.error;
+    const contact = contactResult.data?.[0];
+    return [businessId, contact
+      ? {
+          contact_phone: contact.contact_phone ?? null,
+          contact_email: contact.contact_email ?? null,
+          location: contact.location ?? null,
+          directions: contact.directions ?? null,
+        }
+      : null] as const;
   }));
   const contactsByBusinessId = new Map(contacts);
-  const byBusiness = new Map<string, PublicBusinessCatalog>();
-  for (const row of data) {
-    const entry: PublicBusinessCatalog = byBusiness.get(row.business_id) ?? {
-      business: {
-        id: row.business_id,
-        name: row.business_name,
-        description: row.business_description,
-        logo_path: row.logo_path,
-        accepts_delivery: row.business_accepts_delivery,
-        accepts_pickup: row.accepts_pickup,
-        delivery_fee: row.delivery_fee,
-        payment_methods: row.business_payment_methods,
-        is_open: row.is_open,
-      },
-      products: [],
-      contact: contactsByBusinessId.get(row.business_id) ?? null,
-    };
-    entry.products.push({
-      id: row.product_id,
-      business_id: row.business_id,
-      name: row.product_name,
-      description: row.product_description,
-      image_path: row.image_path,
-      price: row.price,
-      is_available: row.is_available,
-      accepts_delivery: row.accepts_delivery,
-      payment_methods: row.payment_methods,
-      cash_discount_percent: row.cash_discount_percent,
+  const productsByBusinessId = new Map<string, PublicBusinessProduct[]>();
+
+  for (const product of products) {
+    const productList = productsByBusinessId.get(product.business_id) ?? [];
+    const review = productReviews.get(product.id);
+    productList.push({
+      ...product,
+      average_rating: review?.average_rating ?? null,
+      review_count: review?.review_count ?? 0,
     });
-    byBusiness.set(row.business_id, entry);
+    productsByBusinessId.set(product.business_id, productList);
   }
-  return [...byBusiness.values()];
+
+  return businesses.map(business => {
+    const review = businessReviews.get(business.id);
+    return {
+    business: {
+      ...business,
+      delivery_fee_status: isOrderCheckoutV2Enabled
+        ? business.delivery_fee_status
+        : null,
+      logo_path: business.logo_path && !/^(https?:|data:)/i.test(business.logo_path)
+        ? client.storage.from('morfi-catalog').getPublicUrl(business.logo_path).data.publicUrl
+        : business.logo_path,
+      average_rating: review?.average_rating ?? null,
+      review_count: review?.review_count ?? 0,
+    },
+    products: productsByBusinessId.get(business.id) ?? [],
+    contact: contactsByBusinessId.get(business.id) ?? null,
+    };
+  });
 }

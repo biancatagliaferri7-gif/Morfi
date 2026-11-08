@@ -4,22 +4,30 @@ export type ManagedBusiness = {
   id: string;
   name: string;
   description: string;
-  is_published: boolean;
-  is_open: boolean;
-  accepts_delivery: boolean;
-  accepts_pickup: boolean;
-  delivery_fee: number;
-  payment_methods: ('cash' | 'transfer')[];
-  contact_phone: string | null;
-  phone_is_public: boolean;
-  transfer_alias: string | null;
-  transfer_holder: string | null;
+  logo_path: string | null;
   location: string | null;
   directions: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  phone_is_public: boolean;
+  is_published: boolean;
 };
 
-const managedBusinessColumns =
-  'id, name, description, is_published, is_open, accepts_delivery, accepts_pickup, delivery_fee, payment_methods, contact_phone, phone_is_public, transfer_alias, transfer_holder, location, directions';
+export type BusinessRegistrationInput = {
+  name: string;
+  description: string;
+  contact_phone: string;
+  phone_is_public: boolean;
+  location: string;
+  directions: string;
+  latitude: number | null;
+  longitude: number | null;
+  bank_name: string | null;
+  transfer_alias: string | null;
+  transfer_holder: string | null;
+  bank_cuit: string | null;
+  payment_methods: ('cash' | 'transfer')[];
+};
 
 export type BusinessProduct = {
   id: string;
@@ -29,6 +37,7 @@ export type BusinessProduct = {
   image_path: string | null;
   price: number;
   stock_quantity: number;
+  recipe_id: string | null;
   is_available: boolean;
   accepts_delivery: boolean;
   payment_methods: ('cash' | 'transfer')[];
@@ -63,7 +72,7 @@ export async function listManagedBusinesses(userId: string): Promise<ManagedBusi
 
   const { data, error } = await client
     .from('morfi_businesses')
-    .select(managedBusinessColumns)
+    .select('id, name, description, logo_path, location, directions, latitude, longitude, phone_is_public, is_published')
     .in('id', businessIds);
 
   if (error) throw error;
@@ -72,14 +81,28 @@ export async function listManagedBusinesses(userId: string): Promise<ManagedBusi
 
 export async function createBusiness(
   userId: string,
-  name: string,
-  description: string,
+  business: BusinessRegistrationInput,
 ): Promise<ManagedBusiness> {
   const client = getSupabase();
   const { data, error } = await client
     .from('morfi_businesses')
-    .insert({ created_by: userId, name, description })
-    .select(managedBusinessColumns)
+    .insert({
+      created_by: userId,
+      name: business.name,
+      description: business.description,
+      contact_phone: business.contact_phone,
+      phone_is_public: business.phone_is_public,
+      location: business.location,
+      directions: business.directions,
+      latitude: business.latitude,
+      longitude: business.longitude,
+      bank_name: business.bank_name,
+      transfer_alias: business.transfer_alias,
+      transfer_holder: business.transfer_holder,
+      bank_cuit: business.bank_cuit,
+      payment_method: business.payment_methods,
+    })
+    .select('id, name, description, logo_path, location, directions, latitude, longitude, phone_is_public, is_published')
     .single();
 
   if (error) throw error;
@@ -94,32 +117,108 @@ export async function updateBusinessPublication(
     .from('morfi_businesses')
     .update({ is_published: isPublished })
     .eq('id', businessId)
-    .select(managedBusinessColumns)
+    .select('id, name, description, logo_path, location, directions, latitude, longitude, phone_is_public, is_published')
     .single();
 
   if (error) throw error;
   return data;
 }
 
-export async function updateBusinessSettings(
+export async function updateBusinessCoordinates(
   businessId: string,
-  settings: Pick<ManagedBusiness,
-    'is_open' | 'accepts_delivery' | 'accepts_pickup' | 'delivery_fee' | 'payment_methods' |
-    'contact_phone' | 'phone_is_public' | 'transfer_alias' | 'transfer_holder' | 'location' | 'directions'
-  >,
-): Promise<ManagedBusiness> {
-  const { data, error } = await getSupabase()
+  latitude: number,
+  longitude: number,
+): Promise<void> {
+  const { error } = await getSupabase()
     .from('morfi_businesses')
-    .update(settings)
-    .eq('id', businessId)
-    .select(managedBusinessColumns)
-    .single();
+    .update({ latitude, longitude })
+    .eq('id', businessId);
+
   if (error) throw error;
-  return data;
+}
+
+export async function updateBusinessLocation(
+  businessId: string,
+  location: string,
+  directions: string,
+): Promise<void> {
+  const { error } = await getSupabase()
+    .from('morfi_businesses')
+    .update({ location, directions })
+    .eq('id', businessId);
+
+  if (error) throw error;
+}
+
+export async function updateBusinessPhoneVisibility(
+  businessId: string,
+  isPublic: boolean,
+): Promise<void> {
+  const { error } = await getSupabase()
+    .from('morfi_businesses')
+    .update({ phone_is_public: isPublic })
+    .eq('id', businessId);
+
+  if (error) throw error;
+}
+
+export async function uploadBusinessLogo(businessId: string, file: File): Promise<string> {
+  const client = getSupabase();
+  const extensions: Record<string, string> = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/webp': 'webp',
+  };
+  const extension = extensions[file.type];
+  if (!extension || file.size > 5 * 1024 * 1024) {
+    throw new Error('El logo debe ser JPG, PNG o WebP y pesar hasta 5 MB.');
+  }
+
+  const path = `businesses/${businessId}/${crypto.randomUUID()}.${extension}`;
+  const { error: uploadError } = await client.storage
+    .from('morfi-catalog')
+    .upload(path, file, {
+      cacheControl: '3600',
+      contentType: file.type,
+      upsert: false,
+    });
+  if (uploadError) throw uploadError;
+
+  const { error: updateError } = await client
+    .from('morfi_businesses')
+    .update({ logo_path: path })
+    .eq('id', businessId);
+  if (updateError) {
+    const { error: cleanupError } = await client.storage
+      .from('morfi-catalog')
+      .remove([path]);
+    if (cleanupError) {
+      throw new Error(`${updateError.message}. No se pudo limpiar la imagen subida: ${cleanupError.message}`);
+    }
+    throw updateError;
+  }
+
+  return path;
+}
+
+export async function uploadBusinessImage(businessId: string, file: File): Promise<string> {
+  const extensions: Record<string, string> = {
+    'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp',
+  };
+  const extension = extensions[file.type];
+  if (!extension || file.size > 2 * 1024 * 1024) {
+    throw new Error('La foto debe ser JPG, PNG o WebP y pesar hasta 2 MB.');
+  }
+  const client = getSupabase();
+  const path = `businesses/${businessId}/products/${crypto.randomUUID()}.${extension}`;
+  const { error } = await client.storage.from('morfi-catalog')
+    .upload(path, file, { contentType: file.type, upsert: false });
+  if (error) throw error;
+  return client.storage.from('morfi-catalog').getPublicUrl(path).data.publicUrl;
 }
 
 const businessProductColumns =
-  'id, business_id, name, description, image_path, price, stock_quantity, is_available, accepts_delivery, payment_methods, cash_discount_percent';
+  'id, business_id, name, description, image_path, price, stock_quantity, recipe_id, is_available, accepts_delivery, payment_methods, cash_discount_percent';
 
 export async function listBusinessProducts(businessId: string): Promise<BusinessProduct[]> {
   const { data, error } = await getSupabase()
@@ -171,14 +270,4 @@ export async function deleteBusinessProduct(businessId: string, productId: strin
     .eq('id', productId);
 
   if (error) throw error;
-}
-
-export async function uploadBusinessImage(businessId: string, file: File): Promise<string> {
-  const extension = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg';
-  const path = `businesses/${businessId}/products/${crypto.randomUUID()}.${extension}`;
-  const { error } = await getSupabase().storage
-    .from('morfi-catalog')
-    .upload(path, file, { contentType: file.type, upsert: false });
-  if (error) throw error;
-  return getSupabase().storage.from('morfi-catalog').getPublicUrl(path).data.publicUrl;
 }

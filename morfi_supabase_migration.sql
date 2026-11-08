@@ -1,6 +1,8 @@
 -- MORFI initial schema for Supabase.
 -- Review this file before running it in the Supabase SQL Editor.
 -- It is intentionally not applied by the application or build process.
+-- One-time setup for a fresh MORFI schema; it is not safe to run twice or over
+-- an existing MORFI schema. Do not also run the superseded morfi_auth_migration.sql.
 -- Catalog photos are public assets. Never store private documents in this bucket.
 
 begin;
@@ -151,16 +153,40 @@ create trigger morfi_auth_user_profile
 after insert or update of email, raw_user_meta_data on auth.users
 for each row execute function public.morfi_sync_auth_profile();
 
+insert into public.morfi_profiles (
+  id, full_name, phone, email, dni, enabled_panels,
+  seller_alias, seller_holder, seller_location, seller_directions
+)
+select
+  user_record.id,
+  coalesce(user_record.raw_user_meta_data ->> 'full_name', ''),
+  nullif(user_record.raw_user_meta_data ->> 'phone', ''),
+  user_record.email,
+  nullif(user_record.raw_user_meta_data ->> 'dni', ''),
+  case
+    when jsonb_typeof(user_record.raw_user_meta_data -> 'enabled_panels') = 'array'
+      then array(
+        select panel
+        from jsonb_array_elements_text(user_record.raw_user_meta_data -> 'enabled_panels') as panels(panel)
+        where panel = any(array['cliente', 'emprendimiento', 'ahorro']::text[])
+      )
+    else array[]::text[]
+  end,
+  nullif(user_record.raw_user_meta_data ->> 'seller_alias', ''),
+  nullif(user_record.raw_user_meta_data ->> 'seller_holder', ''),
+  nullif(user_record.raw_user_meta_data ->> 'seller_location', ''),
+  nullif(user_record.raw_user_meta_data ->> 'seller_directions', '')
+from auth.users as user_record
+on conflict (id) do nothing;
+
 create or replace function public.morfi_protect_profile_identity()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
-  if new.id is distinct from old.id
-    or new.email is distinct from old.email
-  then
-    raise exception 'Profile identity and email are managed by authentication';
+  if new.id is distinct from old.id then
+    raise exception 'Profile identity is managed by authentication';
   end if;
 
   new.updated_at := now();
@@ -203,10 +229,10 @@ create table public.morfi_businesses (
   accepts_delivery boolean not null default false,
   accepts_pickup boolean not null default true,
   delivery_fee numeric(12, 2) not null default 0 check (delivery_fee >= 0),
-  payment_methods text[] not null default array['cash']::text[]
+  payment_method text[] not null default array['cash']::text[]
     check (
-      cardinality(payment_methods) > 0
-      and payment_methods <@ array['cash', 'transfer']::text[]
+      cardinality(payment_method) > 0
+      and payment_method <@ array['cash', 'transfer']::text[]
     ),
   is_open boolean not null default false,
   is_published boolean not null default false,
@@ -226,6 +252,8 @@ create table public.morfi_business_memberships (
 create unique index morfi_business_one_owner
 on public.morfi_business_memberships (business_id)
 where role = 'owner';
+create index morfi_business_memberships_user
+on public.morfi_business_memberships (user_id, business_id);
 
 create table public.morfi_suppliers (
   id uuid primary key default gen_random_uuid(),
@@ -239,7 +267,6 @@ create table public.morfi_suppliers (
   phone_is_public boolean not null default false,
   email_is_public boolean not null default false,
   is_published boolean not null default false,
-  show_in_market boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -255,6 +282,8 @@ create table public.morfi_supplier_memberships (
 create unique index morfi_supplier_one_owner
 on public.morfi_supplier_memberships (supplier_id)
 where role = 'owner';
+create index morfi_supplier_memberships_user
+on public.morfi_supplier_memberships (user_id, supplier_id);
 
 create or replace function public.morfi_has_business_access(
   p_business_id uuid,
@@ -690,12 +719,13 @@ create table public.morfi_production_batches (
   business_id uuid not null references public.morfi_businesses(id) on delete cascade,
   recipe_id uuid not null,
   recipe_name text not null,
-  recipe_name text not null,
+  request_key uuid not null,
   quantity numeric(14, 4) not null check (quantity > 0),
   yield_unit public.morfi_yield_unit not null,
   total_cost numeric(12, 2) not null check (total_cost >= 0),
   cost_per_unit numeric(12, 4) not null check (cost_per_unit >= 0),
   created_at timestamptz not null default now(),
+  unique (business_id, request_key),
   unique (id, business_id),
   foreign key (recipe_id, business_id)
     references public.morfi_recipes(id, business_id) on delete restrict
@@ -718,7 +748,8 @@ create table public.morfi_production_batch_items (
 
 create or replace function public.morfi_record_production(
   p_recipe_id uuid,
-  p_quantity numeric
+  p_quantity numeric,
+  p_request_key uuid
 )
 returns uuid
 language plpgsql
@@ -739,7 +770,9 @@ begin
   if auth.uid() is null then
     raise exception 'Authentication is required';
   end if;
-  if p_quantity is null or p_quantity <= 0 then
+  if p_recipe_id is null or p_request_key is null
+    or p_quantity is null or p_quantity = 'NaN'::numeric or p_quantity <= 0
+  then
     raise exception 'Production quantity must be greater than zero';
   end if;
 
@@ -755,6 +788,25 @@ begin
   if not found then
     raise exception 'Recipe not found or not accessible to the current user';
   end if;
+  select batch.id
+  into v_batch_id
+  from public.morfi_production_batches batch
+  where batch.business_id = v_recipe.business_id
+    and batch.request_key = p_request_key
+    and batch.recipe_id = v_recipe.id
+    and batch.quantity = p_quantity;
+  if found then
+    return v_batch_id;
+  end if;
+  if exists (
+    select 1
+    from public.morfi_production_batches batch
+    where batch.business_id = v_recipe.business_id
+      and batch.request_key = p_request_key
+  ) then
+    raise exception 'This request key was already used for a different production';
+  end if;
+  v_batch_id := gen_random_uuid();
   if v_recipe.yield_unit = 'unidades' and p_quantity <> trunc(p_quantity) then
     raise exception 'Unit-based production quantity must be a whole number';
   end if;
@@ -830,13 +882,15 @@ begin
   );
 
   insert into public.morfi_production_batches (
-    id, business_id, recipe_id, recipe_name, quantity, yield_unit, total_cost, cost_per_unit
+    id, business_id, recipe_id, recipe_name, request_key,
+    quantity, yield_unit, total_cost, cost_per_unit
   )
   values (
     v_batch_id,
     v_recipe.business_id,
     v_recipe.id,
     v_recipe.name,
+    p_request_key,
     p_quantity,
     v_recipe.yield_unit,
     v_total_cost,
@@ -901,8 +955,6 @@ create table public.morfi_orders (
   id uuid primary key default gen_random_uuid(),
   customer_id uuid not null references public.morfi_profiles(id) on delete restrict,
   business_id uuid not null references public.morfi_businesses(id) on delete restrict,
-  customer_name text,
-  customer_phone text,
   request_key uuid not null,
   request_fingerprint text not null,
   status public.morfi_order_status not null default 'pending',
@@ -922,27 +974,6 @@ create table public.morfi_orders (
     or (delivery_mode = 'pickup' and delivery_address is null)
   )
 );
-
-create or replace function public.morfi_capture_order_customer_contact()
-returns trigger
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  select profile.full_name, profile.phone
-  into new.customer_name, new.customer_phone
-  from public.morfi_profiles profile
-  where profile.id = new.customer_id;
-  return new;
-end
-$$;
-
-revoke all on function public.morfi_capture_order_customer_contact() from public, anon, authenticated;
-
-create trigger morfi_order_customer_contact
-before insert on public.morfi_orders
-for each row execute function public.morfi_capture_order_customer_contact();
 
 create table public.morfi_order_items (
   id uuid primary key default gen_random_uuid(),
@@ -970,6 +1001,7 @@ create table public.morfi_purchases (
   id uuid primary key default gen_random_uuid(),
   business_id uuid not null references public.morfi_businesses(id) on delete cascade,
   request_key uuid not null,
+  request_fingerprint text not null,
   supplier_name text not null default '' check (length(supplier_name) <= 120),
   purchased_at date not null default current_date,
   created_by uuid not null references public.morfi_profiles(id) on delete restrict,
@@ -1000,6 +1032,7 @@ create table public.morfi_sales (
   id uuid primary key default gen_random_uuid(),
   business_id uuid not null references public.morfi_businesses(id) on delete cascade,
   recipe_id uuid not null,
+  recipe_name text not null,
   request_key uuid not null,
   quantity numeric(14, 4) not null check (quantity > 0),
   unit_price numeric(12, 2) not null check (unit_price > 0),
@@ -1031,12 +1064,14 @@ create table public.morfi_inventory_movements (
   production_batch_id uuid,
   purchase_id uuid,
   sale_id uuid,
+  request_key uuid,
   movement_type public.morfi_inventory_movement_type not null,
   quantity_delta numeric(14, 4) not null check (quantity_delta <> 0),
   unit text not null check (length(btrim(unit)) between 1 and 20),
   reason text not null check (length(btrim(reason)) between 1 and 300),
   created_by uuid not null references public.morfi_profiles(id) on delete restrict,
   created_at timestamptz not null default now(),
+  unique (business_id, request_key),
   check (num_nonnulls(ingredient_id, recipe_id, product_id) = 1),
   check (num_nonnulls(order_id, production_batch_id, purchase_id, sale_id) <= 1),
   foreign key (ingredient_id, business_id)
@@ -1055,6 +1090,26 @@ create table public.morfi_inventory_movements (
     references public.morfi_sales(id, business_id) on delete restrict
 );
 
+create index morfi_business_products_catalog
+on public.morfi_business_products (business_id, is_available);
+create index morfi_supplier_products_catalog
+on public.morfi_supplier_products (supplier_id, is_available);
+create index morfi_ingredients_business
+on public.morfi_ingredients (business_id);
+create index morfi_recipes_business
+on public.morfi_recipes (business_id);
+create index morfi_recipe_ingredients_business
+on public.morfi_recipe_ingredients (business_id, recipe_id);
+create index morfi_production_batches_business_date
+on public.morfi_production_batches (business_id, created_at desc);
+create index morfi_production_batch_items_business
+on public.morfi_production_batch_items (business_id, batch_id);
+create index morfi_orders_customer_date
+on public.morfi_orders (customer_id, created_at desc);
+create index morfi_orders_business_date
+on public.morfi_orders (business_id, created_at desc);
+create index morfi_order_items_business_order
+on public.morfi_order_items (business_id, order_id);
 create index morfi_inventory_movements_business_created
 on public.morfi_inventory_movements (business_id, created_at desc);
 
@@ -1072,6 +1127,8 @@ set search_path = ''
 as $$
 declare
   v_purchase_id uuid;
+  v_existing_fingerprint text;
+  v_request_fingerprint text;
   v_item record;
   v_ingredient public.morfi_ingredients%rowtype;
   v_stock_added numeric(14, 4);
@@ -1118,20 +1175,27 @@ begin
     raise exception 'A purchase may contain each ingredient only once';
   end if;
 
+  v_request_fingerprint := md5(concat_ws(
+    '|', p_items::text, p_purchased_at::text, btrim(coalesce(p_supplier_name, ''))
+  ));
   insert into public.morfi_purchases (
-    business_id, request_key, supplier_name, purchased_at, created_by
+    business_id, request_key, request_fingerprint, supplier_name, purchased_at, created_by
   )
   values (
-    p_business_id, p_request_key, btrim(coalesce(p_supplier_name, '')),
+    p_business_id, p_request_key, v_request_fingerprint, btrim(coalesce(p_supplier_name, '')),
     p_purchased_at, auth.uid()
   )
   on conflict (business_id, request_key) do nothing
   returning id into v_purchase_id;
 
   if v_purchase_id is null then
-    select id into v_purchase_id
+    select id, request_fingerprint
+    into v_purchase_id, v_existing_fingerprint
     from public.morfi_purchases
     where business_id = p_business_id and request_key = p_request_key;
+    if v_existing_fingerprint <> v_request_fingerprint then
+      raise exception 'This request key was already used for a different purchase';
+    end if;
     return v_purchase_id;
   end if;
 
@@ -1203,6 +1267,7 @@ as $$
 declare
   v_recipe public.morfi_recipes%rowtype;
   v_sale_id uuid;
+  v_existing_sale public.morfi_sales%rowtype;
   v_unit_cost numeric(12, 4);
   v_total_cost numeric(12, 2);
   v_total_revenue numeric(12, 2);
@@ -1212,20 +1277,6 @@ begin
     or p_quantity <= 0 or p_sold_at is null
   then
     raise exception 'Sale data is incomplete or invalid';
-  end if;
-
-  select sale.id
-  into v_sale_id
-  from public.morfi_sales sale
-  where sale.request_key = p_request_key
-    and sale.recipe_id = p_recipe_id
-    and sale.quantity = p_quantity
-    and public.morfi_has_business_access(
-      sale.business_id,
-      array['owner', 'manager', 'staff']::public.morfi_workspace_role[]
-    );
-  if found then
-    return v_sale_id;
   end if;
 
   select *
@@ -1239,6 +1290,20 @@ begin
   for update;
   if not found then
     raise exception 'Recipe not found or not accessible to the current user';
+  end if;
+  select *
+  into v_existing_sale
+  from public.morfi_sales sale
+  where sale.business_id = v_recipe.business_id
+    and sale.request_key = p_request_key;
+  if found then
+    if v_existing_sale.recipe_id <> v_recipe.id
+      or v_existing_sale.quantity <> p_quantity
+      or v_existing_sale.sold_at <> p_sold_at
+    then
+      raise exception 'This request key was already used for a different sale';
+    end if;
+    return v_existing_sale.id;
   end if;
   if p_quantity > 10000
     or (v_recipe.yield_unit = 'unidades' and p_quantity <> trunc(p_quantity))
@@ -1359,7 +1424,8 @@ create or replace function public.morfi_adjust_inventory(
   p_item_type text,
   p_item_id uuid,
   p_quantity_delta numeric,
-  p_reason text
+  p_reason text,
+  p_request_key uuid
 )
 returns uuid
 language plpgsql
@@ -1371,6 +1437,7 @@ declare
   v_new_quantity numeric;
   v_unit text;
   v_movement_id uuid := gen_random_uuid();
+  v_existing_movement_id uuid;
 begin
   if auth.uid() is null then
     raise exception 'Authentication is required';
@@ -1384,6 +1451,7 @@ begin
     or p_quantity_delta = 0
     or p_reason is null
     or length(btrim(p_reason)) not between 1 and 300
+    or p_request_key is null
   then
     raise exception 'A valid inventory item, quantity change, and reason are required';
   end if;
@@ -1399,6 +1467,19 @@ begin
       array['owner', 'manager', 'staff']::public.morfi_workspace_role[]
     ) then
       raise exception 'Ingredient not found or not accessible to the current user';
+    end if;
+    select id into v_existing_movement_id
+    from public.morfi_inventory_movements
+    where business_id = v_business_id and request_key = p_request_key;
+    if found then
+      if exists (
+        select 1 from public.morfi_inventory_movements
+        where id = v_existing_movement_id and ingredient_id = p_item_id
+          and quantity_delta = p_quantity_delta and reason = btrim(p_reason)
+      ) then
+        return v_existing_movement_id;
+      end if;
+      raise exception 'This request key was already used for a different inventory change';
     end if;
     update public.morfi_ingredients
     set stock_quantity = stock_quantity + p_quantity_delta,
@@ -1418,6 +1499,19 @@ begin
       array['owner', 'manager', 'staff']::public.morfi_workspace_role[]
     ) then
       raise exception 'Recipe not found or not accessible to the current user';
+    end if;
+    select id into v_existing_movement_id
+    from public.morfi_inventory_movements
+    where business_id = v_business_id and request_key = p_request_key;
+    if found then
+      if exists (
+        select 1 from public.morfi_inventory_movements
+        where id = v_existing_movement_id and recipe_id = p_item_id
+          and quantity_delta = p_quantity_delta and reason = btrim(p_reason)
+      ) then
+        return v_existing_movement_id;
+      end if;
+      raise exception 'This request key was already used for a different inventory change';
     end if;
     update public.morfi_recipes
     set finished_stock = finished_stock + p_quantity_delta,
@@ -1441,6 +1535,19 @@ begin
     ) then
       raise exception 'Unlinked product not found or not accessible to the current user';
     end if;
+    select id into v_existing_movement_id
+    from public.morfi_inventory_movements
+    where business_id = v_business_id and request_key = p_request_key;
+    if found then
+      if exists (
+        select 1 from public.morfi_inventory_movements
+        where id = v_existing_movement_id and product_id = p_item_id
+          and quantity_delta = p_quantity_delta and reason = btrim(p_reason)
+      ) then
+        return v_existing_movement_id;
+      end if;
+      raise exception 'This request key was already used for a different inventory change';
+    end if;
     v_unit := 'unidad';
     update public.morfi_business_products
     set stock_quantity = stock_quantity + p_quantity_delta,
@@ -1458,7 +1565,7 @@ begin
 
   insert into public.morfi_inventory_movements (
     id, business_id, ingredient_id, recipe_id, product_id, movement_type,
-    quantity_delta, unit, reason, created_by
+    quantity_delta, unit, reason, created_by, request_key
   )
   values (
     v_movement_id,
@@ -1470,7 +1577,8 @@ begin
     p_quantity_delta,
     v_unit,
     btrim(p_reason),
-    auth.uid()
+    auth.uid(),
+    p_request_key
   );
 
   return v_movement_id;
@@ -1601,6 +1709,7 @@ begin
     end if;
     return v_order_id;
   end if;
+  v_order_id := gen_random_uuid();
 
   select *
   into v_business
@@ -1610,7 +1719,7 @@ begin
   if not found then
     raise exception 'Business is unavailable';
   end if;
-  if not (p_payment_method = any(v_business.payment_methods)) then
+  if not (p_payment_method = any(v_business.payment_method)) then
     raise exception 'Payment method is unavailable for this business';
   end if;
   if p_delivery_mode = 'delivery' then
@@ -1959,7 +2068,7 @@ select
   b.accepts_delivery as business_accepts_delivery,
   b.accepts_pickup,
   b.delivery_fee,
-  b.payment_methods as business_payment_methods,
+  b.payment_method as business_payment_methods,
   b.is_open,
   p.name as product_name,
   p.description as product_description,
@@ -1998,31 +2107,6 @@ from public.morfi_suppliers s
 join public.morfi_supplier_products p on p.supplier_id = s.id
 where s.is_published and p.is_available;
 
-create or replace view public.morfi_public_market_catalog
-with (security_invoker = true, security_barrier = true)
-as
-select
-  s.id as supplier_id,
-  p.id as product_id,
-  s.name as supplier_name,
-  s.description as supplier_description,
-  s.logo_path,
-  s.zone,
-  p.name as product_name,
-  p.description as product_description,
-  p.category,
-  p.comparison_key,
-  p.sale_unit,
-  p.image_path,
-  p.price,
-  p.is_available,
-  p.accepts_delivery,
-  p.payment_methods,
-  p.cash_discount_percent
-from public.morfi_suppliers s
-join public.morfi_supplier_products p on p.supplier_id = s.id
-where s.is_published and s.show_in_market and p.is_available;
-
 -- Contact data is returned only through these publication/consent-checked RPCs.
 create or replace function public.morfi_public_business_contact(p_business_id uuid)
 returns table (
@@ -2041,12 +2125,45 @@ as $$
   select
     case when business.phone_is_public then business.contact_phone end,
     case when business.email_is_public then business.contact_email end,
-    case when 'transfer' = any(business.payment_methods) then business.transfer_alias end,
-    case when 'transfer' = any(business.payment_methods) then business.transfer_holder end,
+    case when 'transfer' = any(business.payment_method) then business.transfer_alias end,
+    case when 'transfer' = any(business.payment_method) then business.transfer_holder end,
     business.location,
     business.directions
   from public.morfi_businesses business
   where business.id = p_business_id and business.is_published
+$$;
+
+create or replace function public.morfi_business_private_settings(p_business_id uuid)
+returns table (
+  contact_phone text,
+  contact_email text,
+  transfer_alias text,
+  transfer_holder text,
+  location text,
+  directions text,
+  phone_is_public boolean,
+  email_is_public boolean
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    business.contact_phone,
+    business.contact_email,
+    business.transfer_alias,
+    business.transfer_holder,
+    business.location,
+    business.directions,
+    business.phone_is_public,
+    business.email_is_public
+  from public.morfi_businesses business
+  where business.id = p_business_id
+    and public.morfi_has_business_access(
+      business.id,
+      array['owner', 'manager']::public.morfi_workspace_role[]
+    )
 $$;
 
 create or replace function public.morfi_public_supplier_contact(p_supplier_id uuid)
@@ -2061,6 +2178,31 @@ as $$
     case when supplier.email_is_public then supplier.contact_email end
   from public.morfi_suppliers supplier
   where supplier.id = p_supplier_id and supplier.is_published
+$$;
+
+create or replace function public.morfi_supplier_private_settings(p_supplier_id uuid)
+returns table (
+  contact_phone text,
+  contact_email text,
+  phone_is_public boolean,
+  email_is_public boolean
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select
+    supplier.contact_phone,
+    supplier.contact_email,
+    supplier.phone_is_public,
+    supplier.email_is_public
+  from public.morfi_suppliers supplier
+  where supplier.id = p_supplier_id
+    and public.morfi_has_supplier_access(
+      supplier.id,
+      array['owner', 'manager']::public.morfi_workspace_role[]
+    )
 $$;
 
 alter table public.morfi_profiles enable row level security;
@@ -2117,7 +2259,7 @@ grant update (
 -- Anonymous table reads are column-limited to public listing fields only.
 grant select (
   id, name, description, logo_path, accepts_delivery, accepts_pickup,
-  delivery_fee, payment_methods, is_open, is_published
+  delivery_fee, payment_method, is_open, is_published
 ) on public.morfi_businesses to anon;
 grant select (
   id, business_id, name, description, image_path, price,
@@ -2131,21 +2273,28 @@ grant select (
   is_available, accepts_delivery, payment_methods, cash_discount_percent
 ) on public.morfi_supplier_products to anon;
 
-grant select, insert, update on public.morfi_businesses to authenticated;
+grant insert, update on public.morfi_businesses to authenticated;
+grant select (
+  id, name, description, logo_path, accepts_delivery, accepts_pickup,
+  delivery_fee, payment_method, is_open, is_published, location, directions
+) on public.morfi_businesses to authenticated;
 grant select on public.morfi_business_memberships to authenticated;
 grant select, delete on public.morfi_business_products to authenticated;
 grant insert (
-  business_id, name, description, image_path, price, stock_quantity, is_available,
+  business_id, name, description, image_path, price, is_available,
   accepts_delivery, payment_methods, cash_discount_percent, recipe_id
 ) on public.morfi_business_products to authenticated;
 grant update (
-  name, description, image_path, price, stock_quantity, is_available, accepts_delivery,
+  name, description, image_path, price, is_available, accepts_delivery,
   payment_methods, cash_discount_percent
 ) on public.morfi_business_products to authenticated;
-grant select, insert, update on public.morfi_suppliers to authenticated;
+grant insert, update on public.morfi_suppliers to authenticated;
+grant select (id, name, description, logo_path, zone, is_published)
+  on public.morfi_suppliers to authenticated;
 grant select on public.morfi_supplier_memberships to authenticated;
 grant select, insert, update, delete on public.morfi_supplier_products to authenticated;
 grant select, insert, update, delete on public.morfi_supplier_promotions to authenticated;
+grant select on public.morfi_supplier_promotions to anon;
 grant select, insert, update, delete on public.morfi_basket_lists,
   public.morfi_basket_items to authenticated;
 grant select, delete on public.morfi_ingredients to authenticated;
@@ -2171,8 +2320,7 @@ grant select on public.morfi_purchases, public.morfi_purchase_items,
   public.morfi_sales to authenticated;
 
 grant select on public.morfi_public_business_catalog,
-  public.morfi_public_supplier_catalog,
-  public.morfi_public_market_catalog to anon, authenticated;
+  public.morfi_public_supplier_catalog to anon, authenticated;
 
 create policy "profiles_select_own"
 on public.morfi_profiles for select to authenticated
@@ -2189,7 +2337,10 @@ using (is_published);
 
 create policy "businesses_select_members"
 on public.morfi_businesses for select to authenticated
-using (public.morfi_has_business_access(id));
+using (
+  created_by = (select auth.uid())
+  or public.morfi_has_business_access(id)
+);
 
 create policy "businesses_insert_creator"
 on public.morfi_businesses for insert to authenticated
@@ -2255,7 +2406,10 @@ using (is_published);
 
 create policy "suppliers_select_members"
 on public.morfi_suppliers for select to authenticated
-using (public.morfi_has_supplier_access(id));
+using (
+  created_by = (select auth.uid())
+  or public.morfi_has_supplier_access(id)
+);
 
 create policy "suppliers_insert_creator"
 on public.morfi_suppliers for insert to authenticated
@@ -2400,20 +2554,18 @@ using (
   )
 );
 
-create policy "supplier_promotions_select_published_or_members"
+create policy "supplier_promotions_select_published"
 on public.morfi_supplier_promotions for select to anon, authenticated
 using (
-  (
-    is_active and ends_at > now() and exists (
-      select 1 from public.morfi_suppliers supplier
-      where supplier.id = supplier_id and supplier.is_published
-    )
-  )
-  or (
-    auth.uid() is not null
-    and public.morfi_has_supplier_access(supplier_id)
+  is_active and ends_at > now() and exists (
+    select 1 from public.morfi_suppliers supplier
+    where supplier.id = supplier_id and supplier.is_published
   )
 );
+
+create policy "supplier_promotions_select_members"
+on public.morfi_supplier_promotions for select to authenticated
+using (public.morfi_has_supplier_access(supplier_id));
 
 create policy "supplier_promotions_insert_managers"
 on public.morfi_supplier_promotions for insert to authenticated
@@ -2610,14 +2762,16 @@ revoke all on function public.morfi_add_business_member(uuid, uuid, public.morfi
 revoke all on function public.morfi_remove_business_member(uuid, uuid) from public, anon;
 revoke all on function public.morfi_add_supplier_member(uuid, uuid, public.morfi_workspace_role) from public, anon;
 revoke all on function public.morfi_remove_supplier_member(uuid, uuid) from public, anon;
-revoke all on function public.morfi_record_production(uuid, numeric) from public, anon;
-revoke all on function public.morfi_adjust_inventory(text, uuid, numeric, text) from public, anon;
+revoke all on function public.morfi_record_production(uuid, numeric, uuid) from public, anon;
+revoke all on function public.morfi_adjust_inventory(text, uuid, numeric, text, uuid) from public, anon;
 revoke all on function public.morfi_create_order(uuid, jsonb, text, text, text, uuid) from public, anon;
 revoke all on function public.morfi_record_purchase(uuid, uuid, jsonb, date, text) from public, anon;
 revoke all on function public.morfi_record_sale(uuid, numeric, uuid, date) from public, anon;
 revoke all on function public.morfi_update_order_status(uuid, public.morfi_order_status) from public, anon;
 revoke all on function public.morfi_public_business_contact(uuid) from public;
 revoke all on function public.morfi_public_supplier_contact(uuid) from public;
+revoke all on function public.morfi_business_private_settings(uuid) from public, anon;
+revoke all on function public.morfi_supplier_private_settings(uuid) from public, anon;
 
 grant execute on function public.morfi_has_business_access(uuid, public.morfi_workspace_role[]) to authenticated;
 grant execute on function public.morfi_has_supplier_access(uuid, public.morfi_workspace_role[]) to authenticated;
@@ -2625,13 +2779,15 @@ grant execute on function public.morfi_add_business_member(uuid, uuid, public.mo
 grant execute on function public.morfi_remove_business_member(uuid, uuid) to authenticated;
 grant execute on function public.morfi_add_supplier_member(uuid, uuid, public.morfi_workspace_role) to authenticated;
 grant execute on function public.morfi_remove_supplier_member(uuid, uuid) to authenticated;
-grant execute on function public.morfi_record_production(uuid, numeric) to authenticated;
-grant execute on function public.morfi_adjust_inventory(text, uuid, numeric, text) to authenticated;
+grant execute on function public.morfi_record_production(uuid, numeric, uuid) to authenticated;
+grant execute on function public.morfi_adjust_inventory(text, uuid, numeric, text, uuid) to authenticated;
 grant execute on function public.morfi_create_order(uuid, jsonb, text, text, text, uuid) to authenticated;
 grant execute on function public.morfi_record_purchase(uuid, uuid, jsonb, date, text) to authenticated;
 grant execute on function public.morfi_record_sale(uuid, numeric, uuid, date) to authenticated;
 grant execute on function public.morfi_update_order_status(uuid, public.morfi_order_status) to authenticated;
 grant execute on function public.morfi_public_business_contact(uuid) to anon, authenticated;
 grant execute on function public.morfi_public_supplier_contact(uuid) to anon, authenticated;
+grant execute on function public.morfi_business_private_settings(uuid) to authenticated;
+grant execute on function public.morfi_supplier_private_settings(uuid) to authenticated;
 
 commit;

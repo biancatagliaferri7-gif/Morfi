@@ -7,22 +7,48 @@ import type { BusinessSection } from './BusinessWorkflow';
 import { useAuth } from '../AuthContext';
 import { isIngredient, isRecipe } from '../business/calculations';
 import {
+  deliveryFeeStatusLabel,
+  isOrderCheckoutV2Enabled,
+  listBusinessMealOrders,
+  orderStatusLabel,
+  paymentStatusLabel,
+  reviewMealOrderTransfer,
+  setMealOrderDeliveryFee,
+  subscribeToMealOrders,
+  updateMealOrderStatus,
+} from '../orders/orderService';
+import type { MealOrder, OrderStatus } from '../orders/orderService';
+import { nextVendorStatuses as nextOrderStatuses } from '../orders/orderPresentation';
+import {
   createBusiness,
   createBusinessProduct,
   deleteBusinessProduct,
   listBusinessProducts,
   listManagedBusinesses,
-  updateBusinessPublication,
-  updateBusinessSettings,
-  updateBusinessProduct,
+  uploadBusinessLogo,
   uploadBusinessImage,
+  updateBusinessCoordinates,
+  updateBusinessLocation,
+  updateBusinessPhoneVisibility,
+  updateBusinessPublication,
+  updateBusinessProduct,
 } from '../business/businessService';
-import type { BusinessProduct, BusinessProductInput } from '../business/businessService';
+import { argentinePaymentProviders } from '../business/paymentOptions';
+import {
+  getPendingBusinessSetup,
+  removePendingBusinessSetup,
+  savePendingBusinessSetup,
+} from '../business/pendingRegistration';
+import type { PendingBusinessSetup } from '../business/pendingRegistration';
+import BusinessLocationMap from '../components/BusinessLocationMap';
+import BusinessSettings from '../business/BusinessSettings';
+import type {
+  BusinessProduct,
+  BusinessProductInput,
+  BusinessRegistrationInput,
+} from '../business/businessService';
 import type { ManagedBusiness } from '../business/businessService';
 import type { Ingredient, Recipe } from '../business/types';
-import { listBusinessOrders, updateOrderStatus } from '../orders/orderService';
-import type { MorfiOrder, OrderStatus } from '../orders/orderService';
-import { nextVendorStatuses, orderSummary, statusLabel } from '../orders/orderPresentation';
 
 type Product = {
   id: number | string;
@@ -77,7 +103,6 @@ const productTypes: { name: string; ingredients: string[] }[] = [
   { name: 'Otro', ingredients: [] },
 ];
 
-
 const defaultIngredientUnit: IngredientUnit = 'g';
 const ingredientUnits: { value: IngredientUnit; label: string }[] = [
   { value: 'g', label: 'g' },
@@ -107,6 +132,7 @@ function toProduct(product: BusinessProduct): Product {
     price: Number(product.price),
     image: product.image_path ?? undefined,
     quantity: product.stock_quantity,
+    recipeId: product.recipe_id ?? undefined,
     available: product.is_available,
     acceptsDelivery: product.accepts_delivery,
     paymentMethods: product.payment_methods,
@@ -135,7 +161,7 @@ export default function Business() {
   const { profile, session } = useAuth();
   const userId = session?.user.id;
   const [products, setProducts] = useState<Product[]>([]);
-  const [orders, setOrders] = useState<MorfiOrder[]>([]);
+  const [orders, setOrders] = useState<MealOrder[]>([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [productType, setProductType] = useState(productTypes[0].name);
@@ -144,7 +170,7 @@ export default function Business() {
   const [price, setPrice] = useState('');
   const [isAvailable, setIsAvailable] = useState(true);
   const [acceptsDelivery, setAcceptsDelivery] = useState(false);
-  const [paymentMethods, setPaymentMethods] = useState<('cash' | 'transfer')[]>(['cash']);
+  const [productPaymentMethods, setProductPaymentMethods] = useState<('cash' | 'transfer')[]>(['cash', 'transfer']);
   const [cashDiscountPercent, setCashDiscountPercent] = useState('');
   const [yieldQuantity, setYieldQuantity] = useState('');
   const [additionalCosts, setAdditionalCosts] = useState('0');
@@ -158,44 +184,70 @@ export default function Business() {
   const photoInput = useRef<HTMLInputElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null);
   const [formError, setFormError] = useState('');
+  const [ordersLoading, setOrdersLoading] = useState(false);
   const [ordersError, setOrdersError] = useState('');
-  const [ordersReload, setOrdersReload] = useState(0);
+  const [orderStatusBusyId, setOrderStatusBusyId] = useState<string | null>(null);
   const [managedBusinesses, setManagedBusinesses] = useState<ManagedBusiness[]>([]);
   const [businessesLoading, setBusinessesLoading] = useState(true);
   const [businessesError, setBusinessesError] = useState('');
   const [businessFormError, setBusinessFormError] = useState('');
   const [businessName, setBusinessName] = useState('');
   const [businessDescription, setBusinessDescription] = useState('');
+  const [businessPhone, setBusinessPhone] = useState(profile?.phone ?? '');
+  const [businessPhonePublic, setBusinessPhonePublic] = useState(true);
+  const [businessLocation, setBusinessLocation] = useState('');
+  const [businessDirections, setBusinessDirections] = useState('');
+  const [businessLatitude, setBusinessLatitude] = useState<number | null>(null);
+  const [businessLongitude, setBusinessLongitude] = useState<number | null>(null);
+  const [businessLocationNotice, setBusinessLocationNotice] = useState('');
+  const [businessLogo, setBusinessLogo] = useState<File | null>(null);
+  const [businessLogoPreview, setBusinessLogoPreview] = useState('');
+  const [acceptsCash, setAcceptsCash] = useState(true);
+  const [acceptsTransfer, setAcceptsTransfer] = useState(false);
+  const businessLogoInput = useRef<HTMLInputElement>(null);
+  const managedLogoInput = useRef<HTMLInputElement>(null);
+  const [logoBusinessId, setLogoBusinessId] = useState<string | null>(null);
+  const [uploadingLogoBusinessId, setUploadingLogoBusinessId] = useState<string | null>(null);
+  const [bankName, setBankName] = useState('');
+  const [otherBankName, setOtherBankName] = useState('');
+  const [transferAlias, setTransferAlias] = useState('');
+  const [transferHolder, setTransferHolder] = useState('');
+  const [bankCuit, setBankCuit] = useState('');
   const [creatingBusiness, setCreatingBusiness] = useState(false);
   const [businessNotice, setBusinessNotice] = useState('');
   const [publicationNotice, setPublicationNotice] = useState('');
   const [publicationError, setPublicationError] = useState('');
   const [publicationBusyId, setPublicationBusyId] = useState<string | null>(null);
+  const [editingLocationBusinessId, setEditingLocationBusinessId] = useState<string | null>(null);
+  const [locationDraft, setLocationDraft] = useState('');
+  const [directionsDraft, setDirectionsDraft] = useState('');
+  const [locationSaveError, setLocationSaveError] = useState('');
+  const [locationSaveNotice, setLocationSaveNotice] = useState('');
+  const [savingLocationBusinessId, setSavingLocationBusinessId] = useState<string | null>(null);
+  const [phoneVisibilityError, setPhoneVisibilityError] = useState('');
+  const [phoneVisibilitySavingId, setPhoneVisibilitySavingId] = useState<string | null>(null);
   const [businessesReload, setBusinessesReload] = useState(0);
   const [selectedBusinessId, setSelectedBusinessId] = useState('');
-  const [businessOpen, setBusinessOpen] = useState(false);
-  const [businessAcceptsDelivery, setBusinessAcceptsDelivery] = useState(false);
-  const [businessAcceptsPickup, setBusinessAcceptsPickup] = useState(true);
-  const [businessDeliveryFee, setBusinessDeliveryFee] = useState('0');
-  const [businessPaymentMethods, setBusinessPaymentMethods] = useState<('cash' | 'transfer')[]>(['cash']);
-  const [businessPhone, setBusinessPhone] = useState('');
-  const [businessPhonePublic, setBusinessPhonePublic] = useState(false);
-  const [businessTransferAlias, setBusinessTransferAlias] = useState('');
-  const [businessTransferHolder, setBusinessTransferHolder] = useState('');
-  const [businessLocation, setBusinessLocation] = useState('');
-  const [businessDirections, setBusinessDirections] = useState('');
-  const [savingBusinessSettings, setSavingBusinessSettings] = useState(false);
-  const [businessSettingsNotice, setBusinessSettingsNotice] = useState('');
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsError, setProductsError] = useState('');
   const [productsNotice, setProductsNotice] = useState('');
   const [productsReload, setProductsReload] = useState(0);
   const [savingProduct, setSavingProduct] = useState(false);
   const [productActionId, setProductActionId] = useState<string | null>(null);
-  const [orderActionId, setOrderActionId] = useState<string | null>(null);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [tab, setTab] = useState<'productos' | 'pedidos' | BusinessSection>('productos');
+  const recipeLinkedProduct = products.find(product => String(product.id) === editingProductId)?.recipeId;
   const packageFactor = (unit: IngredientUnit) => unit === 'kg' || unit === 'l' ? 1000 : 1;
+
+  useEffect(() => {
+    if (!businessLogo) {
+      setBusinessLogoPreview('');
+      return;
+    }
+    const preview = URL.createObjectURL(businessLogo);
+    setBusinessLogoPreview(preview);
+    return () => URL.revokeObjectURL(preview);
+  }, [businessLogo]);
 
   useEffect(() => {
     let active = true;
@@ -204,7 +256,58 @@ export default function Business() {
       setBusinessesError('');
       try {
         if (!userId) throw new Error('No se pudo identificar la sesión autenticada.');
-        const businesses = await listManagedBusinesses(userId);
+        let businesses = await listManagedBusinesses(userId);
+        const accountEmail = session?.user.email;
+        if (accountEmail) {
+          let pendingSetup: PendingBusinessSetup | undefined;
+          try {
+            pendingSetup = await getPendingBusinessSetup(accountEmail);
+          } catch (setupReadError) {
+            const detail = setupReadError instanceof Error ? setupReadError.message : 'Error inesperado.';
+            setBusinessFormError(`No se pudo consultar el guardado pendiente del registro: ${detail}`);
+          }
+          const targetBusiness = pendingSetup
+            ? businesses.find(business => business.name === pendingSetup.businessName)
+            : undefined;
+          if (pendingSetup && targetBusiness) {
+            let updatedBusiness = targetBusiness;
+            let remainingSetup = pendingSetup;
+            try {
+              if (pendingSetup.latitude !== null && pendingSetup.longitude !== null) {
+                await updateBusinessCoordinates(
+                  targetBusiness.id,
+                  pendingSetup.latitude,
+                  pendingSetup.longitude,
+                );
+                updatedBusiness = {
+                  ...updatedBusiness,
+                  latitude: pendingSetup.latitude,
+                  longitude: pendingSetup.longitude,
+                };
+                remainingSetup = { ...remainingSetup, latitude: null, longitude: null };
+              }
+              if (pendingSetup.logo) {
+                const logoPath = await uploadBusinessLogo(targetBusiness.id, pendingSetup.logo);
+                updatedBusiness = { ...updatedBusiness, logo_path: logoPath };
+                remainingSetup = { ...remainingSetup, logo: null };
+              }
+              if (remainingSetup.logo || remainingSetup.latitude !== null || remainingSetup.longitude !== null) {
+                await savePendingBusinessSetup(remainingSetup);
+              } else {
+                await removePendingBusinessSetup(accountEmail);
+              }
+              businesses = businesses.map(business =>
+                business.id === updatedBusiness.id ? updatedBusiness : business,
+              );
+              if (pendingSetup.logo || pendingSetup.latitude !== null || pendingSetup.longitude !== null) {
+                setBusinessNotice('El logo y la ubicación del registro se guardaron automáticamente.');
+              }
+            } catch (setupError) {
+              const detail = setupError instanceof Error ? setupError.message : 'Error inesperado.';
+              setBusinessFormError(`La cuenta se creó, pero no se pudo guardar automáticamente el logo o la ubicación: ${detail}. MORFI lo volverá a intentar al abrir este panel.`);
+            }
+          }
+        }
         if (active) {
           setManagedBusinesses(businesses);
           setSelectedBusinessId(current =>
@@ -223,29 +326,16 @@ export default function Business() {
     return () => {
       active = false;
     };
-  }, [userId, businessesReload]);
-
-  useEffect(() => {
-    const business = managedBusinesses.find(item => item.id === selectedBusinessId);
-    if (!business) return;
-    setBusinessOpen(business.is_open);
-    setBusinessAcceptsDelivery(business.accepts_delivery);
-    setBusinessAcceptsPickup(business.accepts_pickup);
-    setBusinessDeliveryFee(String(business.delivery_fee));
-    setBusinessPaymentMethods(business.payment_methods);
-    setBusinessPhone(business.contact_phone ?? '');
-    setBusinessPhonePublic(business.phone_is_public);
-    setBusinessTransferAlias(business.transfer_alias ?? '');
-    setBusinessTransferHolder(business.transfer_holder ?? '');
-    setBusinessLocation(business.location ?? '');
-    setBusinessDirections(business.directions ?? '');
-    setBusinessSettingsNotice('');
-  }, [managedBusinesses, selectedBusinessId]);
+  }, [userId, businessesReload, session?.user.email]);
 
   async function registerBusiness(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedName = businessName.trim();
     const trimmedDescription = businessDescription.trim();
+    const trimmedPhone = businessPhone.trim();
+    const trimmedLocation = businessLocation.trim();
+    const normalizedCuit = bankCuit.replace(/\D/g, '');
+    const selectedBankName = bankName === 'Otro' ? otherBankName.trim() : bankName.trim();
     setBusinessNotice('');
     setBusinessFormError('');
     if (!userId) {
@@ -256,24 +346,191 @@ export default function Business() {
       setBusinessFormError('Ingresá el nombre de tu emprendimiento.');
       return;
     }
-    if (trimmedName.length > 120 || trimmedDescription.length > 2000) {
-      setBusinessFormError('El nombre admite hasta 120 caracteres y la descripción hasta 2000.');
+    if (!trimmedLocation || !trimmedPhone) {
+      setBusinessFormError('Completá la dirección del punto de venta y el WhatsApp para recibir pedidos.');
+      return;
+    }
+    if (trimmedName.length > 120 || trimmedDescription.length > 2000 ||
+      trimmedLocation.length > 180 || businessDirections.trim().length > 300) {
+      setBusinessFormError('Revisá los largos: nombre hasta 120, descripción hasta 2000, dirección hasta 180 y referencia hasta 300 caracteres.');
+      return;
+    }
+    if (!acceptsCash && !acceptsTransfer) {
+      setBusinessFormError('Elegí al menos un medio de pago.');
+      return;
+    }
+    if (acceptsTransfer && (
+      !selectedBankName ||
+      !transferAlias.trim() ||
+      !transferHolder.trim() ||
+      !/^\d{11}$/.test(normalizedCuit)
+    )) {
+      setBusinessFormError('Para recibir pedidos, completá banco, alias, titular y un CUIT de 11 números.');
+      return;
+    }
+    if (businessLogo && (
+      !['image/jpeg', 'image/png', 'image/webp'].includes(businessLogo.type) ||
+      businessLogo.size > 5 * 1024 * 1024
+    )) {
+      setBusinessFormError('El logo debe ser JPG, PNG o WebP y pesar hasta 5 MB.');
       return;
     }
 
     setCreatingBusiness(true);
     try {
-      const business = await createBusiness(userId, trimmedName, trimmedDescription);
+      const businessInput: BusinessRegistrationInput = {
+        name: trimmedName,
+        description: trimmedDescription,
+        contact_phone: trimmedPhone,
+        phone_is_public: businessPhonePublic,
+        location: trimmedLocation,
+        directions: businessDirections.trim(),
+        latitude: businessLatitude,
+        longitude: businessLongitude,
+        bank_name: acceptsTransfer ? selectedBankName : null,
+        transfer_alias: acceptsTransfer ? transferAlias.trim() : null,
+        transfer_holder: acceptsTransfer ? transferHolder.trim() : null,
+        bank_cuit: acceptsTransfer ? normalizedCuit : null,
+        payment_methods: [
+          ...(acceptsCash ? ['cash' as const] : []),
+          ...(acceptsTransfer ? ['transfer' as const] : []),
+        ],
+      };
+      const business = await createBusiness(userId, businessInput);
       setManagedBusinesses(current => [business, ...current.filter(item => item.id !== business.id)]);
       setSelectedBusinessId(business.id);
       setBusinessName('');
       setBusinessDescription('');
-      setBusinessNotice('Emprendimiento registrado en Supabase y asociado a tu cuenta como propietario.');
+      setBusinessPhone(profile?.phone ?? '');
+      setBusinessPhonePublic(true);
+      setBusinessLocation('');
+      setBusinessDirections('');
+      setBusinessLatitude(null);
+      setBusinessLongitude(null);
+      setBusinessLocationNotice('');
+      setBankName('');
+      setTransferAlias('');
+      setTransferHolder('');
+      setBankCuit('');
+      setAcceptsCash(true);
+      setAcceptsTransfer(false);
+      setBankName('');
+      setOtherBankName('');
+      const selectedLogo = businessLogo;
+      setBusinessLogo(null);
+      if (selectedLogo) {
+        try {
+          const logoPath = await uploadBusinessLogo(business.id, selectedLogo);
+          setManagedBusinesses(current => current.map(item =>
+            item.id === business.id ? { ...item, logo_path: logoPath } : item,
+          ));
+          setBusinessNotice('Emprendimiento y logo guardados en Supabase. Ya podés continuar con tu panel.');
+        } catch (logoError) {
+          const detail = logoError instanceof Error ? logoError.message : 'Error inesperado.';
+          setBusinessFormError(`El emprendimiento se guardó, pero no se pudo subir el logo: ${detail}. Podés volver a intentarlo en la lista.`);
+        }
+      } else {
+        setBusinessNotice('Emprendimiento registrado en Supabase y asociado a tu cuenta como propietario.');
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Error inesperado.';
       setBusinessFormError(`No se pudo registrar el emprendimiento: ${detail}`);
     } finally {
       setCreatingBusiness(false);
+    }
+  }
+
+  async function saveBusinessLocation(businessId: string) {
+    const trimmedLocation = locationDraft.trim();
+    const trimmedDirections = directionsDraft.trim();
+    setLocationSaveError('');
+    setLocationSaveNotice('');
+    if (!trimmedLocation || trimmedLocation.length > 180 || trimmedDirections.length > 300) {
+      setLocationSaveError('Ingresá una dirección de hasta 180 caracteres y una referencia opcional de hasta 300.');
+      return;
+    }
+
+    setSavingLocationBusinessId(businessId);
+    try {
+      await updateBusinessLocation(businessId, trimmedLocation, trimmedDirections);
+      setManagedBusinesses(current => current.map(business =>
+        business.id === businessId
+          ? { ...business, location: trimmedLocation, directions: trimmedDirections }
+          : business,
+      ));
+      setEditingLocationBusinessId(null);
+      setLocationSaveNotice('La dirección y la referencia se guardaron.');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setLocationSaveError(`No se pudo actualizar la ubicación: ${detail}`);
+    } finally {
+      setSavingLocationBusinessId(null);
+    }
+  }
+
+  async function setBusinessPhoneVisibility(businessId: string, isPublic: boolean) {
+    setPhoneVisibilityError('');
+    setPhoneVisibilitySavingId(businessId);
+    try {
+      await updateBusinessPhoneVisibility(businessId, isPublic);
+      setManagedBusinesses(current => current.map(business =>
+        business.id === businessId ? { ...business, phone_is_public: isPublic } : business,
+      ));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setPhoneVisibilityError(`No se pudo actualizar la visibilidad del WhatsApp: ${detail}`);
+    } finally {
+      setPhoneVisibilitySavingId(null);
+    }
+  }
+
+  function useBusinessLocation() {
+    setBusinessLocationNotice('');
+    if (!navigator.geolocation) {
+      setBusinessLocationNotice('Este dispositivo o navegador no ofrece ubicación GPS. Podés escribir la dirección manualmente.');
+      return;
+    }
+
+    setBusinessLocationNotice('Solicitando permiso para acceder a tu ubicación…');
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        setBusinessLatitude(position.coords.latitude);
+        setBusinessLongitude(position.coords.longitude);
+        setBusinessLocationNotice('Ubicación guardada. Podés corregir la dirección manualmente.');
+      },
+      error => {
+        const detail = error.code === error.PERMISSION_DENIED
+          ? 'No se autorizó el acceso a la ubicación.'
+          : error.code === error.POSITION_UNAVAILABLE
+            ? 'El GPS no está disponible en este momento.'
+            : 'No se pudo obtener la ubicación a tiempo.';
+        setBusinessLocationNotice(`${detail} Podés escribir la dirección manualmente.`);
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
+    );
+  }
+
+  async function uploadManagedBusinessLogo(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    const businessId = logoBusinessId;
+    event.target.value = '';
+    if (!file || !businessId) return;
+
+    setUploadingLogoBusinessId(businessId);
+    setBusinessFormError('');
+    setBusinessNotice('');
+    try {
+      const logoPath = await uploadBusinessLogo(businessId, file);
+      setManagedBusinesses(current => current.map(item =>
+        item.id === businessId ? { ...item, logo_path: logoPath } : item,
+      ));
+      setBusinessNotice('Logo actualizado correctamente.');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setBusinessFormError(`No se pudo actualizar el logo: ${detail}`);
+    } finally {
+      setUploadingLogoBusinessId(null);
+      setLogoBusinessId(null);
     }
   }
 
@@ -297,48 +554,6 @@ export default function Business() {
     } finally {
       setPublicationBusyId(null);
     }
-  }
-
-  async function saveBusinessSettings(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const deliveryFee = Number(businessDeliveryFee);
-    const contactPhone = businessPhone.trim();
-    const transferAlias = businessTransferAlias.trim();
-    const transferHolder = businessTransferHolder.trim();
-    const location = businessLocation.trim();
-    const directions = businessDirections.trim();
-    if (!selectedBusinessId || !businessPaymentMethods.length || (!businessAcceptsPickup && !businessAcceptsDelivery) || !Number.isFinite(deliveryFee) || deliveryFee < 0) {
-      setBusinessFormError('Elegí retiro o entrega, al menos un medio de pago y una tarifa de entrega válida.');
-      return;
-    }
-    if (businessAcceptsPickup && !location) {
-      setBusinessFormError('Indicá dónde se retira el pedido o desmarcá retiro en el local.');
-      return;
-    }
-    if (businessPaymentMethods.includes('transfer') && (!transferAlias || !transferHolder)) {
-      setBusinessFormError('Para cobrar por transferencia, completá alias y titular.');
-      return;
-    }
-    setSavingBusinessSettings(true); setBusinessFormError(''); setBusinessSettingsNotice('');
-    try {
-      const updated = await updateBusinessSettings(selectedBusinessId, {
-        is_open: businessOpen,
-        accepts_delivery: businessAcceptsDelivery,
-        accepts_pickup: businessAcceptsPickup,
-        delivery_fee: businessAcceptsDelivery ? deliveryFee : 0,
-        payment_methods: businessPaymentMethods,
-        contact_phone: contactPhone || null,
-        phone_is_public: businessPhonePublic && Boolean(contactPhone),
-        transfer_alias: transferAlias || null,
-        transfer_holder: transferHolder || null,
-        location: location || null,
-        directions: directions || null,
-      });
-      setManagedBusinesses(current => current.map(item => item.id === updated.id ? updated : item));
-      setBusinessSettingsNotice('Configuración guardada. El catálogo usará estas opciones para el pedido.');
-    } catch (error) {
-      setBusinessFormError(`No se pudo guardar la configuración: ${error instanceof Error ? error.message : 'error inesperado.'}`);
-    } finally { setSavingBusinessSettings(false); }
   }
 
   useEffect(() => {
@@ -372,24 +587,43 @@ export default function Business() {
 
   useEffect(() => {
     let active = true;
+    if (!selectedBusinessId) {
+      setOrders([]);
+      setOrdersError('');
+      setOrdersLoading(false);
+      return;
+    }
+
     async function loadOrders() {
-      if (!managedBusinesses.length) { setOrders([]); return; }
+      setOrdersLoading(true);
+      setOrdersError('');
       try {
-        setOrdersError('');
-        const data = await listBusinessOrders(managedBusinesses.map(business => business.id));
+        const data = await listBusinessMealOrders(selectedBusinessId);
         if (active) setOrders(data);
       } catch (error) {
-        if (active) setOrdersError(`No se pudieron cargar los pedidos: ${error instanceof Error ? error.message : 'error inesperado.'}`);
+        const detail = error instanceof Error ? error.message : 'Error inesperado.';
+        if (active) {
+          setOrders([]);
+          setOrdersError(`No se pudieron cargar los pedidos de Supabase: ${detail}`);
+        }
+      } finally {
+        if (active) setOrdersLoading(false);
       }
     }
+
     void loadOrders();
-    const refreshTimer = window.setInterval(() => { void loadOrders(); }, 30_000);
-    return () => { active = false; window.clearInterval(refreshTimer); };
-  }, [managedBusinesses, ordersReload]);
+    const unsubscribe = subscribeToMealOrders('business_id', selectedBusinessId, () => {
+      void loadOrders();
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [selectedBusinessId]);
 
   const sales = orders
-    .filter(order => order.status === 'delivered')
-    .reduce((sum, order) => sum + Number(order.total), 0);
+    .filter(order => order.status === 'delivered' && order.total !== null)
+    .reduce((sum, order) => sum + (order.total ?? 0), 0);
 
   const pending = orders.filter(order => !['delivered', 'rejected', 'cancelled'].includes(order.status)).length;
   const recipeYield = Number(yieldQuantity);
@@ -434,11 +668,11 @@ export default function Business() {
     }));
     if (
       !name.trim() ||
+      productPaymentMethods.length === 0 ||
       name.trim().length > 160 ||
       description.trim().length > 1000 ||
       !Number.isFinite(amount) || amount <= 0 ||
-      !Number.isInteger(stock) || stock < 0 ||
-      paymentMethods.length === 0 ||
+      stockQuantity.trim() === '' || !Number.isInteger(stock) || stock < 0 || stock > 2147483647 ||
       (cashDiscountPercent.trim() !== '' && (
         !Number.isFinite(Number(cashDiscountPercent)) ||
         Number(cashDiscountPercent) < 0 ||
@@ -463,7 +697,7 @@ export default function Business() {
         )
       ))
     ) {
-      setFormError('Completá el producto, el precio y el stock disponible. Revisá los datos de cada ingrediente y sus unidades.');
+      setFormError('Completá el producto, el precio y los datos de cada ingrediente. Revisá que las unidades sean compatibles.');
       return;
     }
     if (!selectedBusinessId) {
@@ -547,24 +781,15 @@ export default function Business() {
         return;
       }
     }
-    let imagePath = productPhoto || null;
-    if (productPhotoFile) {
-      try {
-        imagePath = await uploadBusinessImage(selectedBusinessId, productPhotoFile);
-      } catch (error) {
-        setFormError(`No se pudo subir la foto: ${error instanceof Error ? error.message : 'error inesperado.'}`);
-        return;
-      }
-    }
     const productInput: BusinessProductInput = {
       name: name.trim(),
       description: description.trim(),
-      image_path: imagePath,
+      image_path: productPhoto || null,
       price: amount,
-      stock_quantity: stock,
+      stock_quantity: recipeLinkedProduct ? 0 : stock,
       is_available: isAvailable,
       accepts_delivery: acceptsDelivery,
-      payment_methods: paymentMethods,
+      payment_methods: productPaymentMethods,
       cash_discount_percent: cashDiscountPercent.trim() ? Number(cashDiscountPercent) : null,
     };
 
@@ -572,6 +797,9 @@ export default function Business() {
     setProductsError('');
     setProductsNotice('');
     try {
+      if (productPhotoFile) {
+        productInput.image_path = await uploadBusinessImage(selectedBusinessId, productPhotoFile);
+      }
       const saved = editingProductId
         ? await updateBusinessProduct(selectedBusinessId, editingProductId, productInput)
         : await createBusinessProduct(selectedBusinessId, productInput);
@@ -594,7 +822,7 @@ export default function Business() {
     setPrice('');
     setIsAvailable(true);
     setAcceptsDelivery(false);
-    setPaymentMethods(['cash']);
+    setProductPaymentMethods(['cash', 'transfer']);
     setCashDiscountPercent('');
     setYieldQuantity('');
     setAdditionalCosts('0');
@@ -615,7 +843,7 @@ export default function Business() {
     const file = event.target.files?.[0];
     if (!file) return;
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 2 * 1024 * 1024) {
-      setFormError('La foto debe ser JPG, PNG o WebP de hasta 2 MB. Se guardará en el catálogo, no dentro del producto.');
+      setFormError('La foto debe ser JPG, PNG o WebP de hasta 2 MB.');
       event.target.value = '';
       return;
     }
@@ -640,8 +868,8 @@ export default function Business() {
     setPrice(String(product.price));
     setIsAvailable(product.available);
     setAcceptsDelivery(product.acceptsDelivery ?? false);
-    setPaymentMethods(product.paymentMethods?.length ? product.paymentMethods : ['cash']);
     setCashDiscountPercent(product.cashDiscountPercent == null ? '' : String(product.cashDiscountPercent));
+    setProductPaymentMethods(product.paymentMethods ?? []);
     setProductPhoto(product.image ?? '');
     setProductPhotoFile(null);
     setStockQuantity(String(product.quantity ?? 0));
@@ -687,16 +915,74 @@ export default function Business() {
     }
   }
 
-  async function updateStatus(order: MorfiOrder, status: OrderStatus) {
-    setOrderActionId(order.id);
+  async function updateStatus(order: MealOrder, status: OrderStatus) {
+    let reason: string | null = null;
+    if (status === 'rejected') {
+      const enteredReason = window.prompt('¿Por qué rechazás el pedido?');
+      if (enteredReason === null) return;
+      reason = enteredReason.trim();
+      if (!reason) {
+        setOrdersError('Ingresá un motivo para rechazar el pedido.');
+        return;
+      }
+    } else if (status === 'cancelled') {
+      const enteredReason = window.prompt('Motivo de cancelación (opcional):');
+      if (enteredReason === null) return;
+      reason = enteredReason.trim() || null;
+    }
+
+    setOrderStatusBusyId(order.id);
     setOrdersError('');
     try {
-      await updateOrderStatus(order.id, status);
-      setOrders(current => current.map(item => item.id === order.id ? { ...item, status } : item));
+      await updateMealOrderStatus(order.id, status, reason);
+      const refreshedOrders = await listBusinessMealOrders(selectedBusinessId);
+      setOrders(refreshedOrders);
     } catch (error) {
-      setOrdersError(`No se pudo actualizar el pedido: ${error instanceof Error ? error.message : 'error inesperado.'}`);
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setOrdersError(`No se pudo actualizar el estado del pedido: ${detail}`);
     } finally {
-      setOrderActionId(null);
+      setOrderStatusBusyId(null);
+    }
+  }
+
+  async function setDeliveryQuote(order: MealOrder) {
+    const enteredFee = window.prompt('Costo de envío acordado en pesos (ingresá 0 si es gratuito):');
+    if (enteredFee === null) return;
+    const fee = Number(enteredFee.trim().replace(',', '.'));
+    if (!Number.isFinite(fee) || fee < 0) {
+      setOrdersError('Ingresá un costo de envío válido, mayor o igual a cero.');
+      return;
+    }
+
+    setOrderStatusBusyId(order.id);
+    setOrdersError('');
+    try {
+      await setMealOrderDeliveryFee(order.id, fee);
+      setOrders(await listBusinessMealOrders(selectedBusinessId));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setOrdersError(`No se pudo guardar el costo de envío: ${detail}`);
+    } finally {
+      setOrderStatusBusyId(null);
+    }
+  }
+
+  async function reviewTransfer(order: MealOrder, approved: boolean) {
+    const prompt = approved
+      ? '¿Confirmás que verificaste manualmente el ingreso de esta transferencia?'
+      : '¿Rechazás la transferencia? El pedido también se marcará como rechazado y se devolverá el stock.';
+    if (!window.confirm(prompt)) return;
+
+    setOrderStatusBusyId(order.id);
+    setOrdersError('');
+    try {
+      await reviewMealOrderTransfer(order.id, approved);
+      setOrders(await listBusinessMealOrders(selectedBusinessId));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Error inesperado.';
+      setOrdersError(`No se pudo revisar la transferencia: ${detail}`);
+    } finally {
+      setOrderStatusBusyId(null);
     }
   }
 
@@ -712,7 +998,7 @@ export default function Business() {
 
         <div className="mb-8">
           <span className="text-sm font-bold text-green-700">
-            MORFI · PANEL DE VENTAS
+            MORFI · PANEL DEMOSTRATIVO
           </span>
           <h1 className="text-3xl md:text-4xl font-black mt-2">
             Mi emprendimiento
@@ -742,6 +1028,13 @@ export default function Business() {
           {businessNotice && <p className="mt-4 rounded-xl bg-green-50 p-4 text-sm font-semibold text-green-800" role="status">{businessNotice}</p>}
           {publicationError && <p className="mt-4 rounded-xl bg-red-50 p-4 text-sm font-semibold text-red-800" role="alert">{publicationError}</p>}
           {publicationNotice && <p className="mt-4 rounded-xl bg-green-50 p-4 text-sm font-semibold text-green-800" role="status">{publicationNotice}</p>}
+          <input
+            ref={managedLogoInput}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="sr-only"
+            onChange={event => void uploadManagedBusinessLogo(event)}
+          />
 
           {!businessesLoading && !businessesError && managedBusinesses.length === 0 && (
             <p className="mt-4 text-sm text-gray-600">Todavía no tenés emprendimientos registrados en Supabase.</p>
@@ -753,24 +1046,103 @@ export default function Business() {
                   <div>
                     <h3 className="font-bold">{business.name}</h3>
                     {business.description && <p className="mt-1 whitespace-pre-wrap text-sm text-gray-600">{business.description}</p>}
+                    {business.location && <p className="mt-1 text-sm text-gray-600">{business.location}</p>}
+                    {business.directions && <p className="mt-1 text-sm text-gray-600">Referencia: {business.directions}</p>}
+                    <label className="mt-2 flex items-start gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={business.phone_is_public}
+                        onChange={event => void setBusinessPhoneVisibility(business.id, event.target.checked)}
+                        disabled={phoneVisibilitySavingId !== null}
+                      />
+                      <span>
+                        {phoneVisibilitySavingId === business.id
+                          ? 'Guardando visibilidad del WhatsApp…'
+                          : 'Mostrar WhatsApp en el catálogo público'}
+                      </span>
+                    </label>
                     <p className={`mt-2 text-sm font-bold ${business.is_published ? 'text-green-700' : 'text-gray-500'}`}>
                       Estado: {business.is_published ? 'Publicado' : 'No publicado'}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void toggleBusinessPublication(business)}
-                    disabled={businessesLoading || publicationBusyId !== null}
-                    className={`rounded-xl px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-60 ${business.is_published ? 'bg-gray-600 hover:bg-gray-700' : 'bg-[#8B3F14] hover:bg-[#B84E0E]'}`}
-                  >
-                    {publicationBusyId === business.id
-                      ? 'Actualizando…'
-                      : business.is_published ? 'Pausar negocio' : 'Publicar negocio'}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingLocationBusinessId(current =>
+                          current === business.id ? null : business.id,
+                        );
+                        setLocationDraft(business.location ?? '');
+                        setDirectionsDraft(business.directions ?? '');
+                        setLocationSaveError('');
+                        setLocationSaveNotice('');
+                      }}
+                      className="rounded-xl border border-[#E8C9AA] px-4 py-2 font-bold"
+                    >
+                      {editingLocationBusinessId === business.id ? 'Cancelar ubicación' : 'Editar ubicación'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLogoBusinessId(business.id);
+                        managedLogoInput.current?.click();
+                      }}
+                      disabled={uploadingLogoBusinessId !== null}
+                      className="rounded-xl border border-[#E8C9AA] px-4 py-2 font-bold disabled:opacity-60"
+                    >
+                      {uploadingLogoBusinessId === business.id ? 'Subiendo logo…' : business.logo_path ? 'Cambiar logo' : 'Subir logo'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void toggleBusinessPublication(business)}
+                      disabled={businessesLoading || publicationBusyId !== null}
+                      className={`rounded-xl px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-60 ${business.is_published ? 'bg-gray-600 hover:bg-gray-700' : 'bg-[#8B3F14] hover:bg-[#B84E0E]'}`}
+                    >
+                      {publicationBusyId === business.id
+                        ? 'Actualizando…'
+                        : business.is_published ? 'Pausar negocio' : 'Publicar negocio'}
+                    </button>
+                  </div>
+                  {editingLocationBusinessId === business.id && (
+                    <div className="grid w-full basis-full gap-3 rounded-xl bg-orange-50 p-4">
+                      <label className="text-sm font-semibold">
+                        Dirección exacta
+                        <input
+                          value={locationDraft}
+                          onChange={event => setLocationDraft(event.target.value)}
+                          maxLength={180}
+                          className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
+                          placeholder="Calle, número, barrio y localidad"
+                        />
+                      </label>
+                      <label className="text-sm font-semibold">
+                        Referencia para llegar (opcional)
+                        <textarea
+                          value={directionsDraft}
+                          onChange={event => setDirectionsDraft(event.target.value)}
+                          maxLength={300}
+                          rows={2}
+                          className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
+                          placeholder="Indicaciones breves para encontrar el local"
+                        />
+                      </label>
+                      {locationSaveError && <p role="alert" className="text-sm font-semibold text-red-700">{locationSaveError}</p>}
+                      <button
+                        type="button"
+                        onClick={() => void saveBusinessLocation(business.id)}
+                        disabled={savingLocationBusinessId !== null}
+                        className="w-fit rounded-xl bg-[#8B3F14] px-4 py-2 font-bold text-white disabled:opacity-60"
+                      >
+                        {savingLocationBusinessId === business.id ? 'Guardando…' : 'Guardar ubicación'}
+                      </button>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
           )}
+          {locationSaveNotice && <p role="status" className="mt-3 text-sm font-semibold text-green-800">{locationSaveNotice}</p>}
+          {phoneVisibilityError && <p role="alert" className="mt-3 text-sm font-semibold text-red-700">{phoneVisibilityError}</p>}
 
           <form onSubmit={registerBusiness} className="mt-5 grid gap-3 border-t border-orange-100 pt-5">
             <h3 className="font-bold">Registrar un emprendimiento</h3>
@@ -797,6 +1169,131 @@ export default function Business() {
                 placeholder="Contá brevemente qué ofrecés"
               />
             </label>
+            <label className="text-sm font-semibold">
+              Dirección del punto de venta
+              <input
+                value={businessLocation}
+                onChange={event => setBusinessLocation(event.target.value)}
+                maxLength={180}
+                required
+                className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
+                placeholder="Calle, número, barrio y localidad"
+              />
+            </label>
+            <label className="text-sm font-semibold">
+              Referencia para llegar (opcional)
+              <textarea
+                value={businessDirections}
+                onChange={event => setBusinessDirections(event.target.value)}
+                maxLength={300}
+                rows={2}
+                className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
+                placeholder="Indicaciones breves para encontrar el local"
+              />
+            </label>
+            <label className="text-sm font-semibold">
+              WhatsApp para recibir pedidos
+              <input
+                type="tel"
+                value={businessPhone}
+                onChange={event => setBusinessPhone(event.target.value)}
+                maxLength={16}
+                required
+                className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
+                placeholder="+5492611234567"
+              />
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={businessPhonePublic}
+                onChange={event => setBusinessPhonePublic(event.target.checked)}
+              />
+              <span>Autorizo que este WhatsApp se muestre en el catálogo público para recibir consultas y pedidos. Está activado por defecto.</span>
+            </label>
+            <div className="rounded-xl border border-orange-100 p-4">
+              <p className="text-sm">Para ubicar tu emprendimiento en MORFI, permití el acceso a tu ubicación GPS.</p>
+              <button
+                type="button"
+                onClick={useBusinessLocation}
+                className="mt-3 rounded-xl border border-[#E8C9AA] px-4 py-2 font-bold"
+              >
+                USAR MI UBICACIÓN
+              </button>
+              {businessLocationNotice && <p className="mt-2 text-sm" role="status">{businessLocationNotice}</p>}
+              {businessLatitude !== null && businessLongitude !== null && (
+                <>
+                  <p className="mt-1 text-xs text-gray-500">Ubicación GPS lista para guardar.</p>
+                  <BusinessLocationMap latitude={businessLatitude} longitude={businessLongitude} />
+                </>
+              )}
+            </div>
+            <div>
+              <input
+                ref={businessLogoInput}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="sr-only"
+                onChange={event => {
+                  setBusinessLogo(event.target.files?.[0] ?? null);
+                  event.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => businessLogoInput.current?.click()}
+                className="rounded-xl border border-[#E8C9AA] px-4 py-3 font-bold"
+              >
+                SUBIR LOGO
+              </button>
+              {businessLogo && <p className="mt-2 text-sm">{businessLogo.name}</p>}
+              {businessLogoPreview && (
+                <img
+                  src={businessLogoPreview}
+                  alt="Vista previa del logo del emprendimiento"
+                  className="mt-3 h-24 w-24 rounded-full border bg-white object-contain p-1"
+                />
+              )}
+            </div>
+            <fieldset className="rounded-xl border border-orange-100 p-4">
+              <legend className="px-1 text-sm font-bold">Medios de pago</legend>
+              <label className="mt-2 flex items-center gap-2 text-sm font-semibold">
+                <input type="checkbox" checked={acceptsCash} onChange={event => setAcceptsCash(event.target.checked)} />
+                Acepto efectivo
+              </label>
+              <label className="mt-2 flex items-center gap-2 text-sm font-semibold">
+                <input type="checkbox" checked={acceptsTransfer} onChange={event => setAcceptsTransfer(event.target.checked)} />
+                Acepto transferencias
+              </label>
+              {acceptsTransfer && <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <label className="text-sm font-semibold">
+                    Banco o billetera
+                    <select value={bankName} onChange={event => setBankName(event.target.value)} required className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal">
+                      <option value="">Elegí una opción</option>
+                      {argentinePaymentProviders.map(provider => <option key={provider} value={provider}>{provider}</option>)}
+                      <option value="Otro">Otro</option>
+                    </select>
+                  </label>
+                  {bankName === 'Otro' && (
+                    <label className="text-sm font-semibold">
+                      Escribí el nombre
+                      <input value={otherBankName} onChange={event => setOtherBankName(event.target.value)} maxLength={120} required className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal" />
+                    </label>
+                  )}
+                  <label className="text-sm font-semibold">
+                    Alias
+                    <input value={transferAlias} onChange={event => setTransferAlias(event.target.value)} maxLength={120} required className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal" />
+                  </label>
+                  <label className="text-sm font-semibold">
+                    Titular de la cuenta
+                    <input value={transferHolder} onChange={event => setTransferHolder(event.target.value)} maxLength={120} required className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal" />
+                  </label>
+                  <label className="text-sm font-semibold">
+                    CUIT (11 números)
+                    <input inputMode="numeric" value={bankCuit} onChange={event => setBankCuit(event.target.value)} maxLength={13} required className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal" />
+                  </label>
+              </div>}
+            </fieldset>
             <div>
               <button
                 type="submit"
@@ -818,6 +1315,9 @@ export default function Business() {
               onChange={event => {
                 setSelectedBusinessId(event.target.value);
                 setEditingProductId(null);
+                setProductPhoto('');
+                setProductPhotoFile(null);
+                setStockQuantity('1');
                 setProductsNotice('');
                 setProductsError('');
               }}
@@ -833,29 +1333,9 @@ export default function Business() {
             </select>
           </label>
           <p className="mt-2 text-xs text-gray-600">
-            El stock inicial se carga al crear o editar un producto. Los pedidos y la producción lo actualizan de forma controlada.
+            Cargá el stock disponible al crear o editar el producto. Los pedidos reservan esas unidades automáticamente.
           </p>
-          {selectedBusinessId && <form onSubmit={event => void saveBusinessSettings(event)} className="mt-5 rounded-xl border border-[#F2DDCA] bg-[#FFF9F2] p-4">
-            <h3 className="font-bold">Cómo vendés hoy</h3>
-            <p className="mt-1 text-sm text-gray-600">Marcá estas opciones antes de publicar. Así el cliente ve solo lo que realmente ofrecés.</p>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={businessOpen} onChange={event => setBusinessOpen(event.target.checked)} />Estoy tomando pedidos</label>
-              <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={businessAcceptsPickup} onChange={event => setBusinessAcceptsPickup(event.target.checked)} />Retiro en el local</label>
-              <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" checked={businessAcceptsDelivery} onChange={event => setBusinessAcceptsDelivery(event.target.checked)} />Entrega a domicilio</label>
-              <label className="text-sm font-semibold">Costo de entrega<input type="number" min="0" step="0.01" disabled={!businessAcceptsDelivery} value={businessDeliveryFee} onChange={event => setBusinessDeliveryFee(event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-normal disabled:bg-gray-100" /></label>
-            </div>
-            <fieldset className="mt-3"><legend className="text-sm font-semibold">Cobrás con</legend>{(['cash', 'transfer'] as const).map(method => <label key={method} className="mr-4 inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={businessPaymentMethods.includes(method)} onChange={event => setBusinessPaymentMethods(current => event.target.checked ? [...current, method] : current.filter(value => value !== method))} />{method === 'cash' ? 'Efectivo' : 'Transferencia'}</label>)}</fieldset>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <label className="text-sm font-semibold">Dirección o punto de retiro{businessAcceptsPickup ? ' *' : ''}<input value={businessLocation} onChange={event => setBusinessLocation(event.target.value)} maxLength={180} placeholder="Ej.: Barrio Centro, La Rioja" className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-normal" /></label>
-              <label className="text-sm font-semibold">Indicaciones para llegar<input value={businessDirections} onChange={event => setBusinessDirections(event.target.value)} maxLength={300} placeholder="Ej.: Portón verde, timbre 2" className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-normal" /></label>
-              <label className="text-sm font-semibold">Teléfono para consultas<input type="tel" value={businessPhone} onChange={event => setBusinessPhone(event.target.value)} maxLength={40} placeholder="Ej.: 3804 123456" className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-normal" /></label>
-              <label className="flex items-center gap-2 self-end text-sm font-semibold"><input type="checkbox" checked={businessPhonePublic} disabled={!businessPhone.trim()} onChange={event => setBusinessPhonePublic(event.target.checked)} />Mostrar teléfono al público</label>
-              {businessPaymentMethods.includes('transfer') && <><label className="text-sm font-semibold">Alias para transferir *<input value={businessTransferAlias} onChange={event => setBusinessTransferAlias(event.target.value)} maxLength={120} className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-normal" /></label><label className="text-sm font-semibold">Titular de la cuenta *<input value={businessTransferHolder} onChange={event => setBusinessTransferHolder(event.target.value)} maxLength={120} className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-normal" /></label></>}
-            </div>
-            <p className="mt-2 text-xs text-gray-600">El alias y titular se muestran solo si aceptás transferencia. El teléfono se publica únicamente si lo marcás.</p>
-            {businessSettingsNotice && <p role="status" className="mt-3 rounded-lg bg-green-50 p-3 text-sm font-semibold text-green-800">{businessSettingsNotice}</p>}
-            <button disabled={savingBusinessSettings} className="mt-4 rounded-xl bg-[#8B3F14] px-5 py-3 font-bold text-white disabled:opacity-60">{savingBusinessSettings ? 'Guardando…' : 'Guardar cómo vendés'}</button>
-          </form>}
+          {selectedBusinessId && <BusinessSettings key={selectedBusinessId} businessId={selectedBusinessId} />}
         </section>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
@@ -963,7 +1443,7 @@ export default function Business() {
                       setStockQuantity('1');
                       setIsAvailable(true);
                       setAcceptsDelivery(false);
-                      setPaymentMethods(['cash']);
+                      setProductPaymentMethods(['cash', 'transfer']);
                       setCashDiscountPercent('');
                     }}
                     className="underline"
@@ -973,6 +1453,11 @@ export default function Business() {
                 </p>
               )}
 
+              <label className="mb-4 block text-sm font-semibold">
+                Unidades disponibles para vender
+                <input type="number" min="0" max="2147483647" step="1" required disabled={Boolean(recipeLinkedProduct)} value={stockQuantity} onChange={event => setStockQuantity(event.target.value)} className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal" />
+                {recipeLinkedProduct && <span className="mt-1 block text-xs font-normal">Este producto usa el stock de su receta. Registrá la producción para sumar unidades.</span>}
+              </label>
               {!editingProductId && <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                 <label className="text-sm font-semibold">
                   Plantilla de ingredientes
@@ -1053,19 +1538,6 @@ export default function Business() {
                   className="border border-gray-300 rounded-xl p-3"
                   required={saleMode === 'direct'}
                 />
-                <label className="text-sm font-semibold">
-                  Stock disponible
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={stockQuantity}
-                    onChange={event => setStockQuantity(event.target.value)}
-                    aria-label="Stock disponible"
-                    className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
-                    required
-                  />
-                </label>
                 {saleMode === 'cost' && (
                   <button
                     type="button"
@@ -1086,37 +1558,38 @@ export default function Business() {
                   Acepta delivery
                 </label>
                 <fieldset className="rounded-xl border border-orange-100 p-3">
-                  <legend className="px-1 text-sm font-semibold">Medios de pago</legend>
-                  {(['cash', 'transfer'] as const).map(method => (
-                    <label key={method} className="mr-4 inline-flex items-center gap-2 text-sm">
+                  <legend className="px-1 text-sm font-semibold">Medios de pago para este producto</legend>
+                  <div className="flex flex-wrap gap-4">
+                    <label className="flex items-center gap-2 text-sm font-normal">
                       <input
                         type="checkbox"
-                        checked={paymentMethods.includes(method)}
-                        onChange={event => setPaymentMethods(current => event.target.checked
-                          ? [...current, method]
-                          : current.filter(value => value !== method))}
+                        checked={productPaymentMethods.includes('cash')}
+                        onChange={event => setProductPaymentMethods(current =>
+                          event.target.checked
+                            ? [...current, 'cash']
+                            : current.filter(method => method !== 'cash')
+                        )}
                       />
-                      {method === 'cash' ? 'Efectivo' : 'Transferencia'}
+                      Efectivo
                     </label>
-                  ))}
+                    <label className="flex items-center gap-2 text-sm font-normal">
+                      <input
+                        type="checkbox"
+                        checked={productPaymentMethods.includes('transfer')}
+                        onChange={event => setProductPaymentMethods(current =>
+                          event.target.checked
+                            ? [...current, 'transfer']
+                            : current.filter(method => method !== 'transfer')
+                        )}
+                      />
+                      Transferencia
+                    </label>
+                  </div>
                 </fieldset>
-                <label className="text-sm font-semibold">
-                  Descuento por efectivo (opcional, %)
-                  <input
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    value={cashDiscountPercent}
-                    onChange={event => setCashDiscountPercent(event.target.value)}
-                    className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
-                    placeholder="0 a 100"
-                  />
-                </label>
               </div>
 
               <div className="mt-4">
-                <p className="text-sm font-semibold">Foto del producto (opcional, hasta 2 MB)</p>
+                <p className="text-sm font-semibold">Foto del producto (opcional, hasta 400 KB)</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <button type="button" onClick={() => cameraInput.current?.click()} className="rounded-lg border px-3 py-2 text-sm font-semibold">Sacar foto</button>
                   <button type="button" onClick={() => photoInput.current?.click()} className="rounded-lg border px-3 py-2 text-sm font-semibold">Elegir de galería</button>
@@ -1293,8 +1766,9 @@ export default function Business() {
                       <p className="text-sm text-gray-500">{product.category ?? 'Producto'}{product.quantity !== undefined ? ` · Stock registrado: ${product.quantity}` : ''}</p>
                       <p className="text-sm text-gray-500">
                         {product.acceptsDelivery ? 'Acepta delivery' : 'Sin delivery'} ·
-                        {' '}{(product.paymentMethods ?? []).map(method => method === 'cash' ? 'Efectivo' : 'Transferencia').join(', ')}
-                        {product.cashDiscountPercent != null ? ` · ${product.cashDiscountPercent}% de descuento en efectivo` : ''}
+                        {' '}{product.paymentMethods?.includes('transfer')
+                          ? 'Transferencia'
+                          : 'Actualizá el producto para aceptar transferencia'}
                       </p>
                       <p className="text-gray-600">{money(product.price)}</p>
                       {product.sellerAlias && <p className="mt-2 text-sm"><strong>Alias para transferir:</strong> {product.sellerAlias}{product.sellerHolder ? ` · ${product.sellerHolder}` : ''}</p>}
@@ -1357,32 +1831,134 @@ export default function Business() {
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100">
             <h2 className="text-xl font-black mb-2">Gestión de pedidos</h2>
             <p className="text-gray-500 mb-6">
-              Aceptá o rechazá pedidos y actualizá el estado para que el cliente sepa cómo va. La lista se actualiza cada 30 segundos.
+              Aceptá o rechazá pedidos y actualizá el estado para que el cliente sepa cómo va.
             </p>
-            <div className="mb-4 flex flex-wrap items-center gap-3">
-              <button type="button" onClick={() => setOrdersReload(current => current + 1)} className="rounded-lg border border-[#8B3F14] px-4 py-2 text-sm font-bold">Actualizar pedidos</button>
-              {ordersError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm font-semibold text-red-800">{ordersError}</p>}
-            </div>
+            {ordersError && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm font-semibold text-red-800">{ordersError}</p>}
+            {ordersLoading && <p role="status" className="mb-4 text-sm text-gray-600">Cargando pedidos de Supabase…</p>}
+            {!ordersLoading && !ordersError && orders.length === 0 && (
+              <p className="rounded-xl border border-dashed p-5 text-gray-600">Todavía no recibiste pedidos.</p>
+            )}
 
             <div className="space-y-4">
-              {orders.length === 0 && <p className="text-gray-600">Todavía no recibiste pedidos.</p>}
               {orders.map(order => (
                 <div
                   key={order.id}
                   className="border border-gray-200 rounded-xl p-4 flex flex-wrap justify-between gap-4"
                 >
                   <div>
-                    <p className="font-black">Pedido #{order.id.slice(0, 8)}</p>
-                    <p>{order.customer_name || 'Cliente MORFI'}{order.customer_phone ? ` · ${order.customer_phone}` : ''}</p>
-                    <p className="text-gray-600">{orderSummary(order)}</p>
-                    <p className="text-sm text-gray-600">{order.delivery_mode === 'delivery' ? `Entrega: ${order.delivery_address}` : 'Retiro en el local'} · {order.payment_method === 'cash' ? 'Efectivo' : 'Transferencia'}</p>
-                    <p className="font-bold mt-2">{money(Number(order.total))}</p>
+                    <p className="font-black">Pedido #{order.order_number ?? order.id.slice(0, 8)}</p>
+                    <p>{order.customer_name || 'Cliente MORFI'}</p>
+                    {order.customer_phone && <p className="text-sm text-gray-600">WhatsApp: {order.customer_phone}</p>}
+                    {order.customer_phone && (
+                      <a
+                        href={`https://wa.me/${order.customer_phone.replace(/\D/g, '').replace(/^0/, '').replace(/^15/, '').replace(/^([^5])/, '54$1')}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mt-1 inline-block rounded-lg bg-green-700 px-3 py-2 text-sm font-bold text-white"
+                      >
+                        Contactar por WhatsApp
+                      </a>
+                    )}
+                    <ul className="mt-2 text-sm text-gray-600">
+                      {order.items.map((item, index) => (
+                        <li key={`${order.id}-${index}`}>
+                          {item.quantity} × {item.product_name} · {money(item.line_total)}
+                          {item.customer_notes && <p className="ml-3 text-gray-700">Observación: {item.customer_notes}</p>}
+                        </li>
+                      ))}
+                    </ul>
+                    {order.customer_notes && <p className="mt-2 text-sm"><strong>Observaciones del pedido:</strong> {order.customer_notes}</p>}
+                    <p className="mt-2 text-sm">Subtotal: {money(order.subtotal)}{order.discount_total > 0 ? ` · Descuento: ${money(order.discount_total)}` : ''}</p>
+                    <p className="mt-1 text-sm font-bold">
+                      {order.total === null ? 'Total pendiente de cotización' : `Total: ${money(order.total)}`}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500">
+                      {new Date(order.created_at).toLocaleString('es-AR')} · {order.delivery_mode === 'pickup' ? 'Retiro en el local' : `Entrega: ${order.delivery_address ?? ''}`} · {order.payment_method === 'cash' ? 'Efectivo' : 'Transferencia'}
+                    </p>
+                    {order.delivery_mode === 'delivery' && (
+                      <p className="mt-1 text-sm">
+                        {deliveryFeeStatusLabel(order.delivery_fee_status)}
+                        {order.delivery_fee !== null && ` · ${money(order.delivery_fee)}`}
+                        {order.delivery_references && ` · Referencias: ${order.delivery_references}`}
+                      </p>
+                    )}
+                    <p className="mt-1 text-sm font-semibold">Estado del pago: {paymentStatusLabel(order.payment_status, order.delivery_fee_status)}</p>
+                    {order.payment_method === 'transfer' && (order.transfer_bank || order.transfer_alias || order.transfer_holder) && (
+                      <p className="mt-1 text-sm">
+                        Datos de transferencia: {order.transfer_bank || 'Banco no informado'} · Alias: {order.transfer_alias || 'No informado'} · Titular: {order.transfer_holder || 'No informado'}
+                      </p>
+                    )}
+                    <p className="mt-2 text-sm font-bold">{orderStatusLabel(order.status, order.delivery_mode)}</p>
+                    {order.status_reason && <p className="mt-1 text-sm text-gray-600">Motivo: {order.status_reason}</p>}
+                    {isOrderCheckoutV2Enabled && order.delivery_mode === 'delivery' && order.delivery_fee_status === 'pending' && (
+                      <button
+                        type="button"
+                        onClick={() => void setDeliveryQuote(order)}
+                        disabled={orderStatusBusyId === order.id}
+                        className="mt-3 rounded-lg bg-[#F6A623] px-3 py-2 text-sm font-bold text-[#8B3F14] disabled:opacity-50"
+                      >
+                        Registrar costo acordado (0 si es gratis)
+                      </button>
+                    )}
+                    {order.payment_method === 'transfer' &&
+                      ['pending_payment', 'pending_verification'].includes(order.payment_status ?? '') &&
+                      order.delivery_fee_status !== 'pending' && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void reviewTransfer(order, true)}
+                          disabled={orderStatusBusyId === order.id}
+                          className="rounded-lg bg-green-700 px-3 py-2 text-sm font-bold text-white disabled:opacity-50"
+                        >
+                          Verifiqué manualmente la transferencia
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void reviewTransfer(order, false)}
+                          disabled={orderStatusBusyId === order.id}
+                          className="rounded-lg border border-red-300 px-3 py-2 text-sm font-bold text-red-700 disabled:opacity-50"
+                        >
+                          Rechazar transferencia
+                        </button>
+                      </div>
+                    )}
+                    {order.history.length > 0 && (
+                      <details className="mt-3 text-sm">
+                        <summary className="cursor-pointer font-semibold">Historial del pedido</summary>
+                        <ol className="mt-2 space-y-1">
+                          {order.history.map((entry, index) => (
+                            <li key={`${order.id}-history-${index}`}>
+                              {new Date(entry.created_at).toLocaleString('es-AR')} · {orderStatusLabel(entry.status, order.delivery_mode)}
+                              {entry.reason ? ` · ${entry.reason}` : ''}
+                            </li>
+                          ))}
+                        </ol>
+                      </details>
+                    )}
                   </div>
 
                   <div>
-                    <p className="mb-2 text-sm font-semibold">Estado del pedido</p>
-                    <p className="rounded-lg bg-gray-100 px-3 py-2 text-sm font-semibold">{statusLabel[order.status]}</p>
-                    {nextVendorStatuses(order).map(nextStatus => <button key={nextStatus} type="button" disabled={orderActionId === order.id} onClick={() => void updateStatus(order, nextStatus)} className={`mt-2 w-full rounded-lg px-3 py-2 text-sm font-bold disabled:opacity-50 ${nextStatus === 'rejected' ? 'border border-red-300 text-red-700' : nextStatus === 'accepted' ? 'bg-green-700 text-white' : 'border border-[#8B3F14]'}`}>{nextStatus === 'accepted' ? 'Aceptar pedido' : nextStatus === 'rejected' ? 'Rechazar pedido' : `Marcar como ${statusLabel[nextStatus].toLocaleLowerCase('es')}`}</button>)}
+                    <label
+                      htmlFor={`status-${order.id}`}
+                      className="block text-sm font-semibold mb-2"
+                    >
+                      Estado del pedido
+                    </label>
+                    <select
+                      id={`status-${order.id}`}
+                      value={order.status}
+                      onChange={event =>
+                        void updateStatus(order, event.target.value as OrderStatus)
+                      }
+                      disabled={orderStatusBusyId === order.id || nextOrderStatuses(order).length === 0}
+                      className="border border-gray-300 rounded-xl p-3 bg-white disabled:bg-gray-100"
+                    >
+                      <option value={order.status}>{orderStatusLabel(order.status, order.delivery_mode)}</option>
+                      {nextOrderStatuses(order).map(status => (
+                        <option key={status} value={status}>{orderStatusLabel(status, order.delivery_mode)}</option>
+                      ))}
+                    </select>
+                    {orderStatusBusyId === order.id && <p className="mt-2 text-sm text-gray-600" role="status">Guardando…</p>}
                   </div>
                 </div>
               ))}
@@ -1397,7 +1973,7 @@ export default function Business() {
         )}
 
         <p className="text-center text-gray-500 text-sm mt-10">
-          MORFI · Productos y pedidos se guardan en Supabase. Costos, recetas y producción siguen disponibles como herramientas opcionales.
+          MORFI · Los pedidos se consultan y actualizan en Supabase.
         </p>
       </div>
     </main>

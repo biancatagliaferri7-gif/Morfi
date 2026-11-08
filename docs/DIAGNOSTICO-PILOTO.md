@@ -1,46 +1,36 @@
 # Diagnóstico técnico y operativo de MORFI
 
-Actualizado: 2026-11-07. Este documento registra el estado verificable del repositorio y de las consultas públicas al proyecto Supabase de MORFI. No reemplaza las pruebas autenticadas en staging.
+Revisión de integración del 8 de noviembre de 2026. Base funcional y visual: `feature/bianca`, commit `22d1208fba73433a6e83035eeafee99db59af627`. Esta revisión reemplaza el diagnóstico anterior, elaborado sobre un `main` que no incluía los siete últimos commits de Bianca. Las consultas públicas antiguas no acreditan la compatibilidad de la base publicada con esta integración.
 
 ## Estado de los flujos
 
-| Flujo | Estado | Evidencia | Límite actual |
+| Flujo | Estado | Evidencia reproducible | Límite |
 | --- | --- | --- | --- |
-| Catálogo de Comidas | Conectado y probado | Consultas públicas devuelven emprendimiento y productos publicados | Requiere imágenes en Storage para evitar filas pesadas |
-| Mercado | Conectado y probado | La vista `morfi_public_market_catalog` responde en la base real | Faltaba en las migraciones; queda conciliada |
-| Registro por correo | Implementado sin probar | Usa Supabase Auth, confirmación de correo habilitada | Probar alta, confirmación y recuperación en staging |
-| Pedido de Comidas | Implementado sin probar | Frontend llama a `morfi_create_order` con clave idempotente | Aplicar la migración de conciliación y probar con dos cuentas |
-| Panel vendedor | Implementado sin probar | Lista pedidos, se actualiza cada 30 segundos y llama a `morfi_update_order_status` | Requiere el contacto instantáneo agregado a `morfi_orders` |
-| Stock | Implementado sin probar | La función SQL bloquea producto/receta y descuenta en transacción | Debe probarse simultaneidad y reversión de rechazo/cancelación |
-| Costos, recetas y producción | Simulado | Persisten en `localStorage` | No sincronizan entre dispositivos todavía |
-| Historial de pedidos de Comidas | Implementado sin probar | El cliente consulta `morfi_orders` filtrado por su propia cuenta | Requiere prueba autenticada en staging |
-| Compra en Mercado | Incompleto | Muestra ofertas y contacto | El piloto coordina estas compras con el proveedor, no por checkout |
-| Acceso con Google o teléfono | Bloqueado | Ambos proveedores están deshabilitados en Supabase | No se habilitan sin configuración externa y prueba de costos/entrega |
-| PWA y revisión visual | Implementado sin probar | El build genera manifiesto, actualización automática, shell offline e imágenes públicas de catálogo cacheadas por hasta siete días | Pedidos, sesión y catálogo actualizado requieren red; falta prueba en teléfonos, red lenta e instalación real |
+| Home y navegación | Recuperado; revisión visual pendiente | Home, CSS, logo, portada, footer institucional y `vercel.json` proceden de Bianca | No se validó en navegador real |
+| Registro y recuperación | Implementado; validación real pendiente | Auth conserva confirmación `/auth/callback`, reenvío de correo y recuperación; el registro rápido permite diferir el comercio | Requiere la nueva conciliación y redirect URLs correctas |
+| Catálogo y reseñas | Implementado; validación real pendiente | `publicCatalogService.ts` conserva coordenadas, reseñas y compatibilidad con checkout de Bianca | Hay consultas de contactos por comercio; optimización adicional pendiente |
+| Pedidos | Implementado; validación real pendiente | `createMealOrder` usa clave idempotente y RPC existente o v2 según flag | Comprobar versión instalada antes de activar `VITE_MORFI_ORDER_CHECKOUT_V2` |
+| Entrega y transferencias | Implementado; validación real pendiente | Se mantienen cotización, snapshots, motivos de estado y revisión de transferencia de Bianca | Deben probarse los importes y estados entre dos cuentas |
+| Sincronización | Implementado; validación real pendiente | Realtime existente más consulta cada 30 segundos con pestaña visible y red | Realtime depende de publicación de tablas y configuración del proyecto |
+| Configuración comercial | Probada parcialmente en PostgreSQL local | La RPC privada exige owner/manager; panel permite apertura, modalidades, tarifa y medios de pago | Probar RLS y guardado real en Supabase |
+| Stock | Probado parcialmente en PostgreSQL local | Test comprueba edición propia, rechazo de stock negativo y aislamiento | Reservas, concurrencia y devoluciones necesitan prueba con RPCs reales |
+| Fotos de producto | Implementado; validación real pendiente | Fotos nuevas se suben a `morfi-catalog/businesses/{id}/products/` como archivos | Imágenes base64 heredadas no se migraron; falta prueba de Storage |
+| Costos, recetas y producción | Local | `BusinessWorkflow` y calculadora usan almacenamiento del navegador por cuenta | No hay sincronización de estas herramientas entre dispositivos |
+| Ahorro y Mercado | Código existente conservado | Se preservan servicios y migraciones de Bianca | Bianca retiró Ahorro de la navegación; la ruta sigue existiendo |
+| PWA | Compilable; instalación real pendiente | Iconos PNG de Bianca y caché de imágenes públicas; sin caché de respuestas privadas | Falta probar instalación, actualización, red lenta y offline en teléfonos |
 
-## Hallazgos corregidos en el repositorio
+## Integración realizada
 
-- Se eliminó el parámetro duplicado de `morfi_create_order`.
-- Se alinearon la migración base y una migración de conciliación con `show_in_market` y `morfi_public_market_catalog`.
-- La conciliación restringe la lectura anónima directa a las columnas públicas del catálogo. Los contactos publicados continúan expuestos solo mediante las RPC de consentimiento.
-- El checkout deja de inventar un envío fijo: utiliza la tarifa, entrega, retiro y medios de pago que devuelve cada comercio.
-- El checkout usa una clave idempotente estable por intento, por lo que un reintento no debe duplicar el pedido.
-- Las fotos nuevas de productos se suben al bucket `morfi-catalog`; no se guardan como datos base64 en la fila.
-- El catálogo de Comidas usa la vista pública para reunir comercio y producto en una sola consulta; los contactos todavía se consultan por comercio para respetar el consentimiento.
-- La PWA nunca guarda respuestas de pedidos, perfiles o autenticación. Solo conserva recursos estáticos y fotografías públicas del catálogo.
+- Recuperados todos los archivos de Bianca, incluidos mapa, confirmación de correo, checkout con cotización, reseñas e imágenes.
+- Conservados pruebas, documentación, dependencia `tsx`, eliminación de `supabase-js` no usado y caché PWA de nuestro trabajo.
+- Adaptada la configuración comercial a `payment_method text[]` del comercio y al `delivery_fee_status` del checkout. Los productos mantienen `payment_methods`.
+- Recuperada la carga de stock y fotos a Storage; los productos vinculados a recetas conservan el inventario de esa receta.
+- Registro rápido con nombre, correo y contraseña; configuración completa de Bianca disponible como opción. La migración acepta el registro diferido y preserva el alta completa con pagos.
+- La conciliación ya no reemplaza vistas de Bianca ni agrega snapshots alternativos. Sus datos de contacto y bancarios siguen protegidos; la nueva RPC privada comprueba pertenencia.
+- Se agrega PostgreSQL local de prueba para ejecutar la conciliación y comprobar permisos y ambas variantes del registro. Ese entorno mínimo no es una copia de producción.
 
-## Riesgos y verificaciones obligatorias
+## Lo que falta antes de publicar
 
-1. Aplicar `morfi_reconciliation_migration.sql` primero en staging. No aplicarla en producción sin la prueba de dos cuentas indicada en `PILOT-RELEASE.md`.
-2. Confirmar que el bucket `morfi-catalog` y sus políticas permiten al propietario subir a `businesses/{business_id}/products/`.
-3. Confirmar que una cuenta de otro comercio no lista ni actualiza pedidos ajenos; el SQL usa membresías y RLS para ello.
-4. Crear un comercio abierto, un producto con stock mayor que cero y probar efectivo, transferencia, retiro y entrega. Un producto sin stock debe ser rechazado por el servidor.
-5. Probar el pedido desde un navegador comprador y el panel desde un navegador vendedor. Recargar ambos antes de avanzar estados.
+Seguir `PILOT-RELEASE.md`: verificar esquema instalado, ejecutar la conciliación revisada, confirmar flag de checkout y URLs de Auth, luego probar comprador/vendedor/tercero en la base existente. No se aplicó SQL ni se modificó Vercel desde esta integración.
 
-## Acceso simple
-
-El formulario ya no solicita DNI, teléfono, alias, titular ni dirección al crear una cuenta. El único desvío es la casilla “También quiero vender”; el resto se completa cuando la persona registra su emprendimiento. Para el piloto se mantiene correo y contraseña porque es el único método configurado. Google requiere configurar OAuth y teléfono requiere proveedor SMS, costos, entregabilidad y recuperación de cuenta antes de elegirlos.
-
-## Prueba con personas
-
-Reclutar cinco personas: tres compradores potenciales y dos emprendedores. Pedirles completar estas tareas sin guía: crear cuenta, encontrar un comercio, realizar un pedido; crear emprendimiento, publicar producto con stock, aceptar y entregar pedido. Registrar dónde dudan, mensajes que no entienden y tiempo de cada tarea. El objetivo es que cuatro de cinco completen su recorrido sin ayuda.
+La aplicación no se considera validada para pedidos reales solo porque compile. Deben completarse aislamiento, stock, doble toque, reintento, sesión vencida, teléfono compartido, correos y recorrido en móvil. Probar con cinco personas del público objetivo; objetivo: cuatro completan su recorrido sin ayuda.

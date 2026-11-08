@@ -94,10 +94,10 @@
 
 .home-brand img {
   display: block;
-  width: clamp(205px, 24vw, 280px);
+  width: clamp(100px, 13vw, 145px);
   height: auto;
   object-fit: contain;
-  object-position: left center;
+  object-position: center;
 }
 
 .home-title-ticks {
@@ -257,6 +257,7 @@
 .home-cover {
   position: relative;
   overflow: hidden;
+  aspect-ratio: 1.55;
   border: 7px solid rgb(255 255 255 / 78%);
   border-radius: 30px;
   background: #f4dfc8;
@@ -266,7 +267,8 @@
 .home-cover-image {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+  object-fit: cover;
   transition: transform 650ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
@@ -275,10 +277,17 @@
 }
 
 .home-cover-shade {
-  display: none;
+  position: absolute;
+  inset: 45% 0 0;
+  background: linear-gradient(transparent, rgb(55 27 10 / 25%));
+  pointer-events: none;
 }
 
 .home-cover-caption {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  left: 18px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -309,6 +318,7 @@
   width: 43px;
   height: 43px;
   flex: 0 0 auto;
+  object-fit: contain;
 }
 
 .home-access {
@@ -463,6 +473,100 @@
   outline-offset: 3px;
 }
 
+.home-vendor-card-wrap {
+  display: grid;
+  justify-items: center;
+}
+
+.home-vendor-card {
+  display: flex;
+  width: min(100%, 850px);
+  align-items: center;
+  justify-content: space-between;
+  gap: 30px;
+  padding: clamp(26px, 5vw, 48px);
+  border: 1px solid #f0d7bd;
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 90% 8%, rgb(246 166 35 / 16%), transparent 32%),
+    linear-gradient(120deg, #fffaf4, #fff3e5);
+  box-shadow: 0 16px 40px rgb(91 49 17 / 8%);
+}
+
+.home-vendor-card h2 {
+  margin: 8px 0 10px;
+  font-size: clamp(1.8rem, 3.8vw, 2.65rem);
+  font-weight: 900;
+  letter-spacing: -0.045em;
+  line-height: 1.1;
+}
+
+.home-vendor-card p:last-child {
+  max-width: 570px;
+  margin: 0;
+  color: var(--home-muted);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.home-vendor-eyebrow {
+  margin: 0;
+  color: #b65316;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.home-vendor-card .home-card-button {
+  width: auto;
+  min-width: 190px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding-inline: 21px;
+  background: var(--home-orange);
+}
+
+.home-institutional {
+  padding-block: clamp(42px, 6vw, 72px);
+  border-top: 1px solid var(--home-border);
+  background: #fffaf4;
+}
+
+.home-institutional-layout {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  align-items: start;
+  gap: clamp(28px, 5vw, 64px);
+}
+
+.home-institutional-logo {
+  display: block;
+  width: min(100%, 160px);
+  height: auto;
+  object-fit: contain;
+}
+
+.home-institutional h2 {
+  margin: 0;
+  font-size: clamp(1.55rem, 3vw, 2.15rem);
+  font-weight: 850;
+  letter-spacing: -0.04em;
+  line-height: 1.18;
+}
+
+.home-institutional p {
+  margin: 14px 0 0;
+  color: var(--home-muted);
+  font-size: 0.97rem;
+  line-height: 1.75;
+}
+
+.home-institutional .home-institutional-emphasis {
+  color: var(--home-brown);
+  font-weight: 750;
+}
+
 @keyframes home-rise-in {
   from {
     opacity: 0;
@@ -490,6 +594,7 @@
   }
 
   .home-cover {
+    aspect-ratio: 1.35;
     border-radius: 25px;
   }
 
@@ -516,11 +621,15 @@
   }
 
   .home-cover {
+    aspect-ratio: 1.55;
     border-width: 5px;
     border-radius: 23px;
   }
 
   .home-cover-caption {
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
     padding: 12px 14px;
     border-radius: 15px;
   }
@@ -545,7 +654,7 @@
   }
 
   .home-brand img {
-    width: 218px;
+    width: 112px;
   }
 
   .home-title-ticks {
@@ -628,6 +737,28 @@
 
   .home-card-button {
     margin-top: 19px;
+  }
+
+  .home-vendor-card {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 22px;
+    padding: 24px;
+    border-radius: 20px;
+  }
+
+  .home-vendor-card .home-card-button {
+    width: 100%;
+    min-height: 56px;
+  }
+
+  .home-institutional-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+
+  .home-institutional-logo {
+    width: min(100%, 160px);
   }
 }
 
