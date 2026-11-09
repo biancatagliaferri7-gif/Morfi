@@ -23,7 +23,7 @@ const fixture = `
     name text, description text, location text,
     is_open boolean default false, accepts_delivery boolean default false,
     accepts_pickup boolean default true, delivery_fee numeric default 0,
-    delivery_fee_status text default 'pending', payment_method text[] default array['cash'],
+    delivery_fee_status text default 'pending', payment_methods text[] default array['cash'],
     contact_phone text, phone_is_public boolean default false, bank_name text,
     bank_cuit text, transfer_alias text, transfer_holder text
   );
@@ -101,8 +101,8 @@ test('Bianca integration migration preserves privacy, stock ownership and both s
         business_bank_cuit: '20123456789', business_transfer_alias: 'comercio.alias',
         business_transfer_holder: 'Titular',
       }]);
-      const result = await db.query<{ payment_method: string[]; transfer_alias: string }>('select payment_method, transfer_alias from public.morfi_businesses where created_by = $1', [other]);
-      assert.deepEqual(result.rows[0].payment_method, ['transfer']);
+      const result = await db.query<{ payment_methods: string[]; transfer_alias: string }>('select payment_methods, transfer_alias from public.morfi_businesses where created_by = $1', [other]);
+      assert.deepEqual(result.rows[0].payment_methods, ['transfer']);
       assert.equal(result.rows[0].transfer_alias, 'comercio.alias');
       await assert.rejects(db.query('insert into auth.users values ($1, $2)', [other, { enabled_panels: ['emprendimiento'] }]), /business name/);
     });
