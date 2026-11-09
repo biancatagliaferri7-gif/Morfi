@@ -62,9 +62,10 @@ export default function BusinessSettings({ businessId }: { businessId: string })
       setError('Para cobrar por transferencia completá banco, alias, titular y CUIT de 11 números.'); return;
     }
     setBusy(true);
-    const { delivery_fee_status, ...fields } = settings;
+    const { delivery_fee_status, payment_method, ...fields } = settings;
     const { data, error: saveError } = await supabase.from('morfi_businesses').update({
       ...fields,
+      payment_methods: payment_method,
       contact_phone: settings.contact_phone.trim() || null,
       phone_is_public: settings.phone_is_public && Boolean(settings.contact_phone.trim()),
       bank_name: settings.bank_name.trim() || null,

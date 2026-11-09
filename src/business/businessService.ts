@@ -100,7 +100,7 @@ export async function createBusiness(
       transfer_alias: business.transfer_alias,
       transfer_holder: business.transfer_holder,
       bank_cuit: business.bank_cuit,
-      payment_method: business.payment_methods,
+      payment_methods: business.payment_methods,
     })
     .select('id, name, description, logo_path, location, directions, latitude, longitude, phone_is_public, is_published')
     .single();
