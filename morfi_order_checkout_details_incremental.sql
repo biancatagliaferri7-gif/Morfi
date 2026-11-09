@@ -62,12 +62,11 @@ begin
 
   if not exists (
     select 1
-    from information_schema.columns
-    where table_schema = 'public'
-      and table_name = 'morfi_businesses'
-      and column_name = 'payment_method'
-      and data_type = 'ARRAY'
-      and udt_name = '_text'
+    from pg_catalog.pg_attribute column_record
+    where column_record.attrelid = to_regclass('public.morfi_businesses')
+      and column_record.attname = 'payment_method'
+      and column_record.atttypid = 'text[]'::regtype
+      and not column_record.attisdropped
   ) then
     raise exception 'public.morfi_businesses.payment_method must be text[]';
   end if;

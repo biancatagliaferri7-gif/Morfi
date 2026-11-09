@@ -7,9 +7,11 @@ do $$
 begin
   if to_regprocedure('public.morfi_create_business_from_signup()') is null
     or to_regprocedure('public.morfi_has_business_access(uuid,public.morfi_workspace_role[])') is null
-    or not exists (select 1 from information_schema.columns
-      where table_schema = 'public' and table_name = 'morfi_businesses'
-        and column_name = 'payment_method' and data_type = 'ARRAY')
+    or not exists (select 1 from pg_catalog.pg_attribute column_record
+      where column_record.attrelid = to_regclass('public.morfi_businesses')
+        and column_record.attname = 'payment_method'
+        and column_record.atttypid = 'text[]'::regtype
+        and not column_record.attisdropped)
     or not exists (select 1 from information_schema.columns
       where table_schema = 'public' and table_name = 'morfi_businesses'
         and column_name = 'delivery_fee_status')
