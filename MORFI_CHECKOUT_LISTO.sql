@@ -4,7 +4,11 @@
 begin;
 -- Keep existing public catalog columns available without exposing bank details.
 revoke select on public.morfi_businesses from anon, authenticated;
-grant select (latitude, longitude, phone_is_public)
+grant select (
+  id, name, description, logo_path, location, directions,
+  latitude, longitude, phone_is_public, is_published, is_open,
+  accepts_delivery, accepts_pickup, delivery_fee
+)
   on public.morfi_businesses to anon, authenticated;
 do $$
 declare
