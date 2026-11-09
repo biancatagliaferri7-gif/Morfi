@@ -2,6 +2,10 @@
 -- Preconditions are checked before changes; all DDL/DML is in one transaction.
 -- Apply only after reviewing against the production schema. Do not run until approved.
 begin;
+-- Keep existing public catalog columns available without exposing bank details.
+revoke select on public.morfi_businesses from anon, authenticated;
+grant select (latitude, longitude, phone_is_public)
+  on public.morfi_businesses to anon, authenticated;
 do $$
 declare
   v_missing_columns text;
@@ -46,6 +50,7 @@ begin
     ('morfi_businesses', 'location'),
     ('morfi_businesses', 'directions'),
     ('morfi_businesses', 'delivery_fee'),
+    ('morfi_businesses', 'payment_methods'),
     ('morfi_businesses', 'updated_at'),
     ('morfi_orders', 'id'),
     ('morfi_orders', 'business_id'),
@@ -252,11 +257,11 @@ begin
   );
 
   if v_updated_definition is not distinct from v_definition
-    and v_definition ~* 'v_business\.payment_method'
+    and v_definition ~* 'v_business\.payment_method([^[:alnum:]_]|$)'
   then
     raise exception 'The legacy order RPC does not contain the expected business payment-method check; no function was changed';
   end if;
-  if v_updated_definition ~* 'v_business\.payment_method' then
+  if v_updated_definition ~* 'v_business\.payment_method([^[:alnum:]_]|$)' then
     raise exception 'The legacy order RPC still depends on the missing business payment-method column';
   end if;
 
@@ -341,6 +346,7 @@ $$;
       contact_phone,
       phone_is_public,
       location,
+      payment_methods,
       bank_name,
       bank_cuit,
       transfer_alias,
@@ -353,6 +359,7 @@ $$;
       new.raw_user_meta_data ->> 'phone',
       true,
       v_location,
+      v_payment_methods,
       case when 'transfer' = any(v_payment_methods) then v_bank_name end,
       case when 'transfer' = any(v_payment_methods) then v_bank_cuit end,
       case when 'transfer' = any(v_payment_methods) then v_transfer_alias end,
@@ -368,13 +375,6 @@ $$;
 
   alter table public.morfi_orders
     add column if not exists status_reason text;
-
--- A configured business WhatsApp is public for catalog and order delivery.
--- The public contact function below still returns it only for published businesses.
-update public.morfi_businesses
-set phone_is_public = true
-where nullif(btrim(contact_phone), '') is not null
-  and phone_is_public is distinct from true;
 
 create or replace function public.morfi_public_business_contact(p_business_id uuid)
 returns table (

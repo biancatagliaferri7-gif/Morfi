@@ -9,7 +9,7 @@ begin
     or to_regprocedure('public.morfi_has_business_access(uuid,public.morfi_workspace_role[])') is null
     or not exists (select 1 from pg_catalog.pg_attribute column_record
       where column_record.attrelid = to_regclass('public.morfi_businesses')
-        and column_record.attname = 'payment_method'
+        and column_record.attname = 'payment_methods'
         and column_record.atttypid = 'text[]'::regtype
         and not column_record.attisdropped)
     or not exists (select 1 from information_schema.columns
@@ -45,7 +45,7 @@ begin
     raise exception 'Only this business owner or manager can view its settings';
   end if;
   return query select b.is_open, b.accepts_delivery, b.accepts_pickup,
-    b.delivery_fee, b.delivery_fee_status, b.payment_method,
+    b.delivery_fee, b.delivery_fee_status, b.payment_methods,
     b.contact_phone, b.phone_is_public, b.bank_name, b.bank_cuit,
     b.transfer_alias, b.transfer_holder
   from public.morfi_businesses b where b.id = p_business_id;
@@ -114,7 +114,7 @@ begin
   end if;
   insert into public.morfi_businesses (
     created_by, name, description, contact_phone, phone_is_public, location,
-    payment_method, bank_name, bank_cuit, transfer_alias, transfer_holder
+    payment_methods, bank_name, bank_cuit, transfer_alias, transfer_holder
   ) values (
     new.id, v_name, v_description, new.raw_user_meta_data ->> 'phone', true, v_location,
     v_payment_methods,
