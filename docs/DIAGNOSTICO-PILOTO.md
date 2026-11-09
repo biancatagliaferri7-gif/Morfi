@@ -23,7 +23,7 @@ Revisión de integración del 8 de noviembre de 2026. Base funcional y visual: `
 
 - Recuperados todos los archivos de Bianca, incluidos mapa, confirmación de correo, checkout con cotización, reseñas e imágenes.
 - Conservados pruebas, documentación, dependencia `tsx`, eliminación de `supabase-js` no usado y caché PWA de nuestro trabajo.
-- Adaptada la configuración comercial a `payment_method text[]` del comercio y al `delivery_fee_status` del checkout. Los productos mantienen `payment_methods`.
+- Adaptada la configuración comercial a `payment_methods text[]` del comercio y al `delivery_fee_status` del checkout. `payment_method` es el alias usado por algunas RPC; los productos también mantienen `payment_methods`.
 - Recuperada la carga de stock y fotos a Storage; los productos vinculados a recetas conservan el inventario de esa receta.
 - Registro rápido con nombre, correo y contraseña; configuración completa de Bianca disponible como opción. La migración acepta el registro diferido y preserva el alta completa con pagos.
 - La conciliación ya no reemplaza vistas de Bianca ni agrega snapshots alternativos. Sus datos de contacto y bancarios siguen protegidos; la nueva RPC privada comprueba pertenencia.
