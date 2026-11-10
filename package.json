@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "npm run test:orders && npm run test:order-errors && npm run test:public-stock && npm run test:calculations && npm run test:database && npm run test:auth && npm run test:reviews",
+    "test": "npm run test:orders && npm run test:order-stock-policy && npm run test:order-errors && npm run test:calculations && npm run test:database && npm run test:auth && npm run test:reviews",
+    "test:order-stock-policy": "node --import=tsx --test test/order-stock-policy.test.ts",
     "test:order-errors": "node --import=tsx --test test/order-errors.test.ts",
-    "test:public-stock": "node --import=tsx --test test/public-stock-availability.test.ts",
     "test:auth": "node --import=tsx --test test/password-errors.test.ts",
     "test:reviews": "node --import=tsx --test test/reviews.test.ts",
     "test:database": "node --import=tsx --test test/integration-migration.test.ts",
