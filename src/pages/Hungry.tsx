@@ -32,7 +32,6 @@ type Dish = {
   acceptsDelivery?: boolean;
   cashDiscountPercent?: number | null;
   paymentMethods?: ('cash' | 'transfer')[];
-  inStock?: boolean;
   averageRating?: number | null;
   reviewCount?: number;
   image: string;
@@ -87,7 +86,6 @@ function mapPublicCatalog(catalog: PublicBusinessCatalog[]): Shop[] {
       price: Number(product.price),
       acceptsDelivery: product.accepts_delivery,
       paymentMethods: product.payment_methods,
-      inStock: product.in_stock,
       cashDiscountPercent: product.cash_discount_percent,
       averageRating: product.average_rating,
       reviewCount: product.review_count,
@@ -378,7 +376,6 @@ export default function Hungry() {
     : 0;
   const total = deliveryFee === null ? null : discountedSubtotal + deliveryFee;
   const canPlaceOrder = subtotal > 0 &&
-    lines.every(dish => dish.inStock !== false) &&
     (delivery === 'pickup' ? supportsPickup : supportsDelivery && address.trim().length >= 5) &&
     selectedPaymentAvailable &&
     (delivery !== 'delivery' || deliveryFee !== null || isOrderCheckoutV2Enabled) &&
@@ -392,9 +389,6 @@ export default function Hungry() {
     delivery === 'delivery' && deliveryFee === null;
   const checkoutBlockers = [
     ...(lines.length === 0 ? ['Agregá al menos un producto al carrito.'] : []),
-    ...(lines.some(dish => dish.inStock === false)
-      ? ['Hay productos agotados en el carrito. Quitalos para continuar.']
-      : []),
     ...(lines.length > 0 && (delivery === 'pickup' ? !supportsPickup : !supportsDelivery)
       ? ['El emprendimiento o algún producto del carrito no admite esta modalidad de entrega.']
       : []),
@@ -442,10 +436,6 @@ export default function Hungry() {
   }, [delivery, supportsDelivery, supportsPickup]);
   const updateQty = (id: string, change: number) => {
     const dish = selected?.dishes.find(item => item.id === id);
-    if (change > 0 && dish?.inStock === false) {
-      setNotice(`${dish.name} está agotado. Elegí otro producto o consultá al comercio.`);
-      return;
-    }
     if (change > 0 && delivery === 'delivery' && selected?.kind === 'supplier' && !dish?.acceptsDelivery) {
       setDelivery('pickup');
       setAddress('');
@@ -863,14 +853,13 @@ export default function Hungry() {
                         )}
                         {d.promotionTitle && <p className="mt-1 text-xs font-bold text-green-800">{d.promotionTitle}</p>}
                         <p className="mt-2 font-bold">{money(d.price)}{d.saleUnit ? ` / ${d.saleUnit}` : ''}</p>
-                        {d.inStock === false && <p className="mt-1 text-sm font-bold text-red-700">Agotado</p>}
                         {d.originalPrice && <p className="text-sm text-gray-500 line-through">{money(d.originalPrice)}</p>}
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
                       <button aria-label={'Quitar ' + d.name} onClick={() => updateQty(d.id, -1)} className="rounded-lg border px-3 py-2 font-bold">−</button>
                       <span className="w-5 text-center">{cart[d.id] || 0}</span>
-                      <button aria-label={'Agregar ' + d.name} onClick={() => updateQty(d.id, 1)} disabled={d.inStock === false} className="rounded-lg bg-[#F6A623] px-3 py-2 font-bold disabled:cursor-not-allowed disabled:opacity-40">+</button>
+                      <button aria-label={'Agregar ' + d.name} onClick={() => updateQty(d.id, 1)} className="rounded-lg bg-[#F6A623] px-3 py-2 font-bold">+</button>
                     </div>
                   </article>
                 ))}
