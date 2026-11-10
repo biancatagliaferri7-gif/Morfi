@@ -30,6 +30,7 @@ export type PublicBusinessProduct = {
   accepts_delivery: boolean;
   payment_methods: ('cash' | 'transfer')[];
   cash_discount_percent: number | null;
+  in_stock: boolean;
   average_rating: number | null;
   review_count: number;
 };
@@ -88,6 +89,17 @@ export async function listPublishedBusinessCatalog(): Promise<PublicBusinessCata
 
   if (productsError) throw productsError;
 
+  const availabilityResult = await client.rpc('morfi_public_product_availability');
+  // Deploy the SQL function before the frontend. Keep the older catalog usable
+  // during a staggered deployment, while the server still enforces stock.
+  if (availabilityResult.error && availabilityResult.error.code !== 'PGRST202') {
+    throw availabilityResult.error;
+  }
+  const availabilityKnown = !availabilityResult.error;
+  const availabilityByProductId = new Map<string, boolean>(
+    (availabilityResult.data ?? []).map((row: { product_id: string; in_stock: boolean }) => [row.product_id, row.in_stock === true]),
+  );
+
   const [businessReviewsResult, productReviewsResult] = await Promise.all([
     client.from('morfi_business_review_summary')
       .select('business_id, average_rating, review_count')
@@ -144,6 +156,7 @@ export async function listPublishedBusinessCatalog(): Promise<PublicBusinessCata
     const review = productReviews.get(product.id);
     productList.push({
       ...product,
+      in_stock: availabilityKnown ? availabilityByProductId.get(product.id) === true : true,
       average_rating: review?.average_rating ?? null,
       review_count: review?.review_count ?? 0,
     });
