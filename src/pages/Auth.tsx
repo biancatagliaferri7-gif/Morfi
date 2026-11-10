@@ -37,7 +37,7 @@ function messageFor(error: unknown) {
   if (/rate limit|too many requests/i.test(message)) return 'Se realizaron demasiados intentos. Esperá unos minutos e intentá de nuevo.';
   if (/email.*(smtp|provider|send)/i.test(message)) return 'No se pudo enviar el correo. Revisá que el proveedor Email y el envío de correos estén configurados en Supabase.';
   if (/database error saving new user/i.test(message) || code === 'database_error') {
-    return 'Supabase no pudo guardar la cuenta: el alta de emprendedores ejecuta funciones de base de datos al crear el usuario. Puede faltar una tabla, columna o trigger de MORFI. Revisá los Auth Logs de Supabase; no vuelvas a registrarte hasta confirmar si la cuenta llegó a crearse.';
+    return 'No pudimos crear la cuenta. Si ya registraste tu DNI en MORFI, ingresá con esa cuenta o pedí ayuda para recuperarla. Si no, avisá al equipo del proyecto antes de volver a intentarlo.';
   }
   if (/invalid api key|no api key|invalid jwt/i.test(message)) {
     return 'Supabase rechazó las credenciales de conexión de esta versión. Revisá VITE_SUPABASE_URL y VITE_SUPABASE_PUBLISHABLE_KEY en las variables de Preview de Vercel y redeployá.';
