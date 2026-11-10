@@ -6,6 +6,14 @@ function errorMessage(error: unknown): string {
   return '';
 }
 
+export function isOrderHistoryUnavailable(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const details = error as { code?: unknown; message?: unknown };
+  return (details.code === 'PGRST205' || details.code === '42P01') &&
+    typeof details.message === 'string' &&
+    details.message.includes('morfi_order_status_history');
+}
+
 export function messageForOrderError(error: unknown): string {
   const message = errorMessage(error);
   const shortage = /^Insufficient finished stock for product (.+)$/i.exec(message);

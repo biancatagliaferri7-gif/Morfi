@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabaseClient';
+import { isOrderHistoryUnavailable } from './orderErrors';
 
 export type OrderStatus =
   | 'pending'
@@ -236,7 +237,10 @@ async function loadMealOrders(
       .order('created_at', { ascending: true }),
   ]);
   if (businessesResult.error) throw businessesResult.error;
-  if (historyResult.error) throw historyResult.error;
+  // Older databases may lack the optional timeline; still show the saved order.
+  if (historyResult.error && !isOrderHistoryUnavailable(historyResult.error)) {
+    throw historyResult.error;
+  }
 
   const businessNames = new Map(businessesResult.data.map(business => [business.id, business.name]));
   const itemsByOrder = new Map<string, MealOrder['items']>();
@@ -253,7 +257,7 @@ async function loadMealOrders(
     itemsByOrder.set(item.order_id, items);
   }
   const historyByOrder = new Map<string, OrderStatusHistoryEntry[]>();
-  for (const event of historyResult.data) {
+  for (const event of historyResult.data ?? []) {
     const history = historyByOrder.get(event.order_id) ?? [];
     history.push({
       status: event.status,
