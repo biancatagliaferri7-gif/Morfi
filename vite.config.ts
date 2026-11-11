@@ -9,27 +9,12 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      workbox: {
-        cleanupOutdatedCaches: true,
-        navigateFallback: '/index.html',
-        runtimeCaching: [
-          {
-            // Only public catalogue images are retained for a short offline visit.
-            // API responses, sessions and orders are intentionally never cached.
-            urlPattern: /^https:\/\/[^/]+\.supabase\.co\/storage\/v1\/object\/public\/morfi-catalog\//,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'morfi-public-catalog-images',
-              expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 60 * 24 * 7,
-              },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
-        ],
-      },
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
+      injectManifest: { maximumFileSizeToCacheInBytes: 3 * 1024 * 1024 },
       manifest: {
+        id: '/',
         name: 'MORFI',
         short_name: 'MORFI',
         lang: 'es-AR',
