@@ -36,11 +36,11 @@ La prueba del service worker usa un evento push sintético y reemplaza la presen
 
 Se usó el proyecto publicado `upsmoqivykcgvhhopckf` porque el usuario autorizó expresamente ensayos allí y confirmó que todo su contenido es demo. La suite automática predeterminada continúa aislada. El conector conserva otra organización; no usar sus proyectos de cierre de caja para MORFI. El usuario autenticó la CLI con acceso a MORFI para desplegar la función y configurar Vault/cron.
 
-**Verificado en servicios:** `order-push` desplegado en MORFI, secretos en Edge/Vault, pg_net y pg_cron habilitados, aviso de nuevos eventos y trabajo de reintento cada minuto activo. Invocación sin secreto: HTTP 401; con secreto: HTTP 200 (`processed: 0`, cola sin dispositivos).
+**Verificado en servicios:** `order-push` desplegado en MORFI, secretos en Edge/Vault, pg_net y pg_cron habilitados, aviso de nuevos eventos y trabajo de reintento cada minuto activo. Invocación sin secreto: HTTP 401; con secreto: HTTP 200. El pedido DEMO **#7** generó una entrega `sent` en el primer intento, sin error; el vendedor confirmó que apareció la notificación de Windows 11/Chrome. El problema detectado con el pedido DEMO #6 fue que la clave pública VAPID se importaba como no exportable: el cifrado fallaba antes de contactar a Chrome. Se corrigió la importación, se reforzó la prueba Deno con el mismo recorrido de claves y se volvió a desplegar la función. Los pedidos DEMO #6 y #7 quedaron `cancelled`; no se enviaron mensajes de WhatsApp.
 
 **Publicado:** PR #3 integrada en `main`, commit de funcionalidad `9cb4df0`; Vercel Production Ready y dominio `morfi-ten.vercel.app` verificados. En el dominio público se comprobaron el registro de clientes, el enlace emprendedor al pie, el asistente separado y el catálogo conectado. La PWA del navegador inicialmente mostró su caché anterior y cargó la versión nueva al recargar; comprobar también los dispositivos ya instalados.
 
-**Pendiente hasta registrarse nueva evidencia:** avisos reales en Android/iOS/escritorio, actualización desde una PWA anterior instalada, prueba física entre dispositivos, lector de pantalla y validación con cinco personas (objetivo 4/5). No marcar estas actividades como terminadas por pasar las pruebas simuladas.
+**Pendiente hasta registrarse nueva evidencia:** avisos reales en Android/iOS y Chrome con la PWA cerrada o en segundo plano, actualización desde una PWA anterior instalada, prueba física entre dispositivos, lector de pantalla y validación con cinco personas (objetivo 4/5). La recepción en Windows 11/Chrome se verificó con el vendedor; las demás plataformas y estados de la aplicación siguen pendientes.
 
 ## Cómo verificar el código
 
