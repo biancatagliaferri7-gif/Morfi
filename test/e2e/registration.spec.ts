@@ -36,9 +36,13 @@ async function fixture(
     resume = false,
     lostReply = false,
     sellerAccount = false,
+    identityRejected = false,
   } = {},
 ) {
   let seller = sellerAccount;
+  let logoutScope = "";
+  let draftStarted = resume;
+  let draftLoads = 0;
   let identityDone = signed;
   let reception = sellerAccount ? "open" : "unpublished";
   let completions = 0;
@@ -76,8 +80,12 @@ async function fixture(
     let body: any = [];
     const payload = route.request().postDataJSON();
     if (url.pathname.startsWith("/auth/v1/signup")) body = { ...session, user };
+    else if (url.pathname === "/auth/v1/token") body = session;
     else if (url.pathname === "/auth/v1/user") body = user;
-    else if (url.pathname.includes("morfi_profiles"))
+    else if (url.pathname === "/auth/v1/logout") {
+      logoutScope = url.searchParams.get("scope") ?? "";
+      body = {};
+    } else if (url.pathname.includes("morfi_profiles"))
       body = {
         id: userId,
         full_name: "Persona de prueba",
@@ -86,11 +94,25 @@ async function fixture(
         enabled_panels: seller ? ["cliente", "emprendimiento"] : ["cliente"],
       };
     else if (url.pathname.includes("/rpc/morfi_get_seller_draft")) {
+      draftStarted = true;
+      draftLoads++;
       draft.parent_business_id = payload.p_parent_business_id;
       body = draft;
-    } else if (url.pathname.includes("/rpc/morfi_save_seller_identity"))
+    } else if (url.pathname.includes("/rpc/morfi_save_seller_identity")) {
+      if (identityRejected) {
+        await route.fulfill({
+          status: 409,
+          contentType: "application/json",
+          body: JSON.stringify({
+            code: "23505",
+            message: "DNI already exists",
+          }),
+        });
+        return;
+      }
+      identityDone = true;
       body = null;
-    else if (url.pathname.includes("/rpc/morfi_save_seller_draft")) {
+    } else if (url.pathname.includes("/rpc/morfi_save_seller_draft")) {
       saves.push(payload.p_data);
       draft = { ...draft, data: payload.p_data, step: payload.p_step };
       body = null;
@@ -104,7 +126,11 @@ async function fixture(
       }
       body = businessId;
     } else if (url.pathname.includes("morfi_seller_setup_drafts"))
-      body = url.searchParams.has("id") ? draft : [];
+      body = url.searchParams.has("id")
+        ? draft
+        : draftStarted && !draft.result_business_id && !draft.parent_business_id
+          ? [{ id: draft.id }]
+          : [];
     else if (url.pathname.includes("morfi_business_memberships"))
       body = seller ? [{ business_id: businessId, role: "owner" }] : [];
     else if (url.pathname.includes("/rpc/morfi_set_order_reception")) {
@@ -175,6 +201,12 @@ async function fixture(
   await page.route("https://tile.openstreetmap.org/**", (r) => r.abort());
   return {
     saves,
+    get draftLoads() {
+      return draftLoads;
+    },
+    get logoutScope() {
+      return logoutScope;
+    },
     get completions() {
       return completions;
     },
@@ -378,5 +410,71 @@ test("seller can pause orders and start a branch without repeating personal data
   await expect(page.getByLabel("Contraseña", { exact: true })).toHaveCount(0);
   await expect(
     page.getByLabel("Nombre de esta sucursal", { exact: true }),
+  ).toBeVisible();
+});
+
+test("sign out clears seller navigation and keeps other devices signed in", async ({
+  page,
+}) => {
+  const f = await fixture(page, { signed: true, sellerAccount: true });
+  await page.goto("/business");
+  await expect(
+    page.getByRole("link", { name: "Mi emprendimiento", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Salir", exact: true }).click();
+  await expect(page).toHaveURL(/\/login/);
+  await expect(
+    page.getByRole("link", { name: "Mi emprendimiento", exact: true }),
+  ).toHaveCount(0);
+  expect(f.logoutScope).toBe("local");
+});
+
+test("a rejected DNI keeps the created account resumable and recovery is reachable", async ({
+  page,
+}) => {
+  const f = await fixture(page, { identityRejected: true });
+  await page.goto("/register/emprendedor");
+  await page
+    .getByLabel("Nombre y apellido", { exact: true })
+    .fill("Persona de prueba");
+  await page.getByLabel("DNI N°").fill("12345678");
+  await page
+    .getByLabel("WhatsApp público donde recibirás pedidos")
+    .fill("3804000000");
+  await page
+    .getByLabel("Correo electrónico", { exact: true })
+    .fill("prueba@example.invalid");
+  await page
+    .getByLabel("Contraseña", { exact: true })
+    .fill("ClaveDePrueba123!");
+  await page.getByRole("button", { name: "Continuar", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Ese DNI ya está asociado",
+  );
+  expect(f.draftLoads).toBeGreaterThan(0);
+  await page
+    .getByRole("button", {
+      name: "Recuperar el acceso a mi cuenta",
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Recuperar contraseña", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Nueva contraseña", { exact: true }),
+  ).toHaveCount(0);
+  expect(f.logoutScope).toBe("local");
+  await page.goto("/login");
+  await page
+    .getByLabel("Correo electrónico", { exact: true })
+    .fill("prueba@example.invalid");
+  await page
+    .getByLabel("Contraseña", { exact: true })
+    .fill("ClaveDePrueba123!");
+  await page.getByRole("button", { name: "Ingresar", exact: true }).click();
+  await expect(page).toHaveURL(/register\/emprendedor/);
+  await expect(
+    page.getByRole("heading", { name: "Tus datos", exact: true }),
   ).toBeVisible();
 });

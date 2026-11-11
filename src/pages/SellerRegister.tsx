@@ -26,7 +26,7 @@ export default function SellerRegister({
 }: {
   branch?: boolean;
 }) {
-  const { session, loading, refreshProfile } = useAuth();
+  const { session, loading, refreshProfile, signOut } = useAuth();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const parent = branch ? params.get("parent") : null;
@@ -194,13 +194,9 @@ export default function SellerRegister({
         return;
       }
     }
-    await saveIdentity(name, dni, phone);
     if (!accountId) throw new Error("Ingresá para continuar el registro.");
-    await refreshProfile(accountId);
     const ownDraft = draft ?? (await loadDraft(parent));
     setDraft(ownDraft);
-    patch({ phone: normalizePhone(phone) });
-    initialized.current = true;
     setParams(
       (prev) => {
         prev.set("draft", ownDraft.id);
@@ -208,6 +204,10 @@ export default function SellerRegister({
       },
       { replace: true },
     );
+    await saveIdentity(name, dni, phone);
+    await refreshProfile(accountId);
+    patch({ phone: normalizePhone(phone) });
+    initialized.current = true;
     setStep(2);
   }
   async function next(e: React.FormEvent<HTMLFormElement>) {
@@ -524,13 +524,48 @@ export default function SellerRegister({
           {error && (
             <div role="alert" className="rounded-xl bg-red-50 p-3 text-red-800">
               {error}
-              {/DNI|correo ya/.test(error) && (
-                <Link
-                  className="mt-2 block underline"
-                  to="/login?next=%2Fregister%2Femprendedor"
-                >
-                  Ingresar o recuperar mi cuenta
-                </Link>
+              {/DNI ya está asociado|correo ya/.test(error) && (
+                <>
+                  {session ? (
+                    <button
+                      type="button"
+                      className="mt-2 block min-h-11 underline"
+                      onClick={() =>
+                        void signOut()
+                          .then(() =>
+                            navigate(
+                              "/login?recovery=1&next=%2Fregister%2Femprendedor",
+                            ),
+                          )
+                          .catch((e) => setError(setupError(e)))
+                      }
+                    >
+                      Recuperar el acceso a mi cuenta
+                    </button>
+                  ) : (
+                    <Link
+                      className="mt-2 block underline"
+                      to="/login?next=%2Fregister%2Femprendedor"
+                    >
+                      Ingresar o recuperar mi cuenta
+                    </Link>
+                  )}
+                  {session && (
+                    <button
+                      type="button"
+                      className="mt-2 min-h-11 underline"
+                      onClick={() =>
+                        void signOut()
+                          .then(() =>
+                            navigate("/login?next=%2Fregister%2Femprendedor"),
+                          )
+                          .catch((e) => setError(setupError(e)))
+                      }
+                    >
+                      Ingresar con otra cuenta
+                    </button>
+                  )}
+                </>
               )}
             </div>
           )}

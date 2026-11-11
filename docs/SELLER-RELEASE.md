@@ -36,9 +36,11 @@ La prueba del service worker usa un evento push sintético y reemplaza la presen
 
 Se usó el proyecto publicado `upsmoqivykcgvhhopckf` porque el usuario autorizó expresamente ensayos allí y confirmó que todo su contenido es demo. La suite automática predeterminada continúa aislada. El conector conserva otra organización; no usar sus proyectos de cierre de caja para MORFI. El usuario autenticó la CLI con acceso a MORFI para desplegar la función y configurar Vault/cron.
 
-**Verificado en servicios:** `order-push` desplegado en MORFI, secretos en Edge/Vault, pg_net y pg_cron habilitados, aviso de nuevos eventos y trabajo de reintento cada minuto activo. Invocación sin secreto: HTTP 401; con secreto: HTTP 200 (`processed: 0`, cola sin dispositivos).
+**Verificado en servicios:** `order-push` desplegado en MORFI, secretos en Edge/Vault, pg_net y pg_cron habilitados, aviso de nuevos eventos y trabajo de reintento cada minuto activo. Invocación sin secreto: HTTP 401; con secreto: HTTP 200. El pedido DEMO **#7** generó una entrega `sent` en el primer intento, sin error; el vendedor confirmó que apareció la notificación de Windows 11/Chrome. El problema detectado con el pedido DEMO #6 fue que la clave pública VAPID se importaba como no exportable: el cifrado fallaba antes de contactar a Chrome. Se corrigió la importación, se reforzó la prueba Deno con el mismo recorrido de claves y se volvió a desplegar la función. Los pedidos DEMO #6 y #7 quedaron `cancelled`; no se enviaron mensajes de WhatsApp.
 
-**Pendiente hasta registrarse nueva evidencia:** frontend Ready en Vercel, avisos reales en Android/iOS/escritorio, actualización desde una PWA anterior instalada, prueba física entre dispositivos, lector de pantalla y validación con cinco personas (objetivo 4/5). No marcar estas actividades como terminadas por pasar las pruebas simuladas.
+**Publicado:** PR #3 integrada en `main`, commit de funcionalidad `9cb4df0`; Vercel Production Ready y dominio `morfi-ten.vercel.app` verificados. En el dominio público se comprobaron el registro de clientes, el enlace emprendedor al pie, el asistente separado y el catálogo conectado. La PWA del navegador inicialmente mostró su caché anterior y cargó la versión nueva al recargar; comprobar también los dispositivos ya instalados.
+
+**Pendiente hasta registrarse nueva evidencia:** avisos reales en Android/iOS y Chrome con la PWA cerrada o en segundo plano, actualización desde una PWA anterior instalada, prueba física entre dispositivos, lector de pantalla y validación con cinco personas (objetivo 4/5). La recepción en Windows 11/Chrome se verificó con el vendedor; las demás plataformas y estados de la aplicación siguen pendientes.
 
 ## Cómo verificar el código
 
@@ -76,7 +78,7 @@ No ejecutar todas las variantes SQL históricas de la raíz. `docs/PILOT-RELEASE
 6. Ejecutar `supabase/seller-release-verify.sql`: todos los resultados deben ser true.
 7. Recorrer el alta y los pedidos con cuentas preparadas para ese ensayo.
 
-Las migraciones ya fueron aplicadas al proyecto MORFI demo el 11/11. No es necesario repetirlas para desplegar el frontend. Las migraciones realizadas mediante SQL Editor deben registrarse/reconciliarse antes de introducir `supabase db push`; no reinicializar la base ni afirmar que la CLI conoce automáticamente las ejecuciones manuales.
+Las migraciones ya fueron aplicadas al proyecto MORFI demo el 11/11. No es necesario repetirlas para desplegar el frontend. Las cuatro versiones de esta entrega fueron registradas con `supabase migration repair --status applied`; `supabase migration list --linked` coincide con los cuatro archivos locales. La base histórica sigue documentada fuera de esa carpeta: no reinicializar ni reproducir todas las variantes SQL.
 
 ## Activar el servidor de avisos
 
@@ -128,3 +130,15 @@ Si falla el frontend, volver en Vercel al despliegue anterior mientras se invest
 La compilación informa un chunk de MapLibre mayor a 500 KB, cargado a demanda, y una deprecación de configuración interna del plugin PWA. `npm audit` conserva cuatro avisos de severidad baja en dependencias de desarrollo relacionadas con deepmerge; la corrección sugerida implica cambiar la versión mayor del plugin y necesita una actualización separada. No aplicar `npm audit fix --force` durante esta entrega.
 
 La recuperación de contraseñas sigue necesitando un proveedor de correo funcional para destinatarios externos, aunque el piloto no exija confirmar correos nuevos. Este cambio no incorpora otro método de acceso ni un proveedor SMTP.
+
+## Revisión de seguridad del despliegue
+
+`supabase db lint --linked --schema public,morfi_private --level error --fail-on error` terminó sin errores. Los ocho controles propios de permisos dieron true. El asesor de seguridad no encontró errores; advierte sobre RPC SECURITY DEFINER ejecutables. En las nuevas operaciones autenticadas esa ejecución es intencional y cada función comprueba identidad/pertenencia; la disponibilidad anónima devuelve solo estados de comercios publicados. Los helpers privados tienen EXECUTE revocado para roles de la API.
+
+El asesor también advierte que `pg_net` está instalado en public. Esta extensión declaró `extrelocatable=false`; no se eliminó ni reinstaló para moverla durante la entrega, preservando la cola. Sus operaciones de red se ejecutan en el esquema net, no mediante una nueva RPC pública sin autorización. Continúa asimismo el aviso previo de protección de contraseñas filtradas deshabilitada en Auth; la configuración de acceso del piloto se conservó.
+
+El cierre de sesión usa `scope: local`: revoca el dispositivo actual y su suscripción sin cerrar la cuenta en otros equipos. El cambio de usuario elimina el vínculo local del service worker antes de mostrar avisos de otra cuenta. [Contrato de cierre de sesión de Supabase](https://supabase.com/docs/guides/auth/signout).
+
+La prueba con cinco personas y los dispositivos se puede registrar en [PRUEBA-DE-USO.md](PRUEBA-DE-USO.md). La batería de navegador incorpora el cierre de sesión local y la desaparición de la navegación vendedora después de salir.
+
+La prueba de DNI repetido comprueba además que la cuenta conserva un borrador reanudable y que la ayuda abre la recuperación de la cuenta existente, cerrando primero la sesión nueva para no cambiar la contraseña de la cuenta equivocada.

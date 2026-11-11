@@ -1,5 +1,7 @@
 # Validación de salida a piloto
 
+La entrega de registro emprendedor, horarios, sucursales y avisos está publicada. Para esa versión seguir [Registro, horarios y avisos](SELLER-RELEASE.md); los pasos de abajo conservan el historial de la base anterior.
+
 La versión integrada recupera `feature/bianca` en `22d1208fba73433a6e83035eeafee99db59af627`. El código de pedidos, la confirmación `/auth/callback`, el mapa y las reseñas son los de esa rama. No publicar nuevamente el código anterior de `main` ni inicializar de nuevo la base existente.
 
 1. En el Supabase existente, ejecutar primero las consultas de lectura de `MORFI_CHECKOUT_VERIFICACION.sql`. Identificar qué migraciones de Bianca ya están instaladas. No ejecutar todas las variantes SQL del repositorio: `MORFI_CHECKOUT_LISTO.sql` y los tres archivos numerados son alternativas, no pasos acumulativos. Si faltan prerrequisitos, resolverlos antes de desplegar.

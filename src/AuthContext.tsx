@@ -181,7 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       async signOut() {
         if (!supabase) throw new Error("Supabase no está configurado.");
         if (typeof indexedDB !== "undefined") await disableOrderPush();
-        const { error } = await supabase.auth.signOut();
+        const { error } = await supabase.auth.signOut({ scope: "local" });
         if (error) throw error;
       },
     }),

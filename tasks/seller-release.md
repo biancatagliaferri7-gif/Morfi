@@ -16,8 +16,10 @@ Base: main ac9a14c; rama codex/registro-vendedor. Versión de Bianca conservada.
 ## Pendiente de servicios o personas
 
 - [x] Worker desplegado, secretos/Vault, webhook y reintento cada minuto activos. HTTP 401 sin secreto y 200 con autorización.
-- [ ] Commit publicado Ready en Vercel con clave pública VAPID.
-- [ ] Prueba física entre dispositivos, Android/iOS/escritorio y cambio de usuario.
+- [x] Aviso real Windows 11/Chrome del pedido DEMO #7: entrega `sent` en Supabase y recepción confirmada por el vendedor. Pedidos demo #6 y #7 cancelados tras la prueba.
+- [x] PR #3 integrada; commit funcional 9cb4df0 Production Ready, dominio público y VAPID verificados. Preview configurado con el mismo backend demo autorizado.
+- [x] Historial remoto de cuatro migraciones conciliado con CLI; lint SQL sin errores.
+- [ ] Prueba física entre dispositivos, Android/iOS, Chrome con PWA cerrada/en segundo plano y cambio de usuario.
 - [ ] Actualización desde la PWA anterior instalada y lector de pantalla.
 - [ ] Cinco personas del público objetivo; al menos 4/5 completan las tareas.
 

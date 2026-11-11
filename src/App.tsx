@@ -108,7 +108,7 @@ const DesktopHeader: React.FC = () => {
       <div className="flex items-center gap-3 flex-shrink-0">
         {session ? (
           <>
-            <span className="text-sm font-semibold">{profile?.full_name || 'Cuenta verificada'}</span>
+            <span className="text-sm font-semibold">{profile?.full_name || 'Mi cuenta'}</span>
             <button onClick={closeSession} className="rounded-full border border-[#E8C9AA] px-4 py-2 text-sm font-semibold">Salir</button>
           </>
         ) : (
