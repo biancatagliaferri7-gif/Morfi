@@ -66,6 +66,7 @@ export default function SellerRegister({
     return () => URL.revokeObjectURL(u);
   }, [logo]);
   useEffect(() => {
+    if (submitLock.current) return;
     initialized.current = false;
     if (!session || !supabase) return;
     let active = true;
@@ -168,6 +169,7 @@ export default function SellerRegister({
       !normalizePhone(phone)
     )
       throw new Error("Completá nombre y apellido, DNI y un WhatsApp válido.");
+    let accountId = session?.user.id;
     if (!session) {
       const r = await supabase.auth.signUp({
         email: email.trim().toLowerCase(),
@@ -184,6 +186,7 @@ export default function SellerRegister({
       });
       setPassword("");
       if (r.error) throw r.error;
+      accountId = r.data.user?.id;
       if (!r.data.session) {
         setNotice(
           "Confirmá tu correo si el servicio lo solicita. Después ingresá para continuar tu emprendimiento.",
@@ -192,8 +195,19 @@ export default function SellerRegister({
       }
     }
     await saveIdentity(name, dni, phone);
-    await refreshProfile();
+    if (!accountId) throw new Error("Ingresá para continuar el registro.");
+    await refreshProfile(accountId);
+    const ownDraft = draft ?? (await loadDraft(parent));
+    setDraft(ownDraft);
     patch({ phone: normalizePhone(phone) });
+    initialized.current = true;
+    setParams(
+      (prev) => {
+        prev.set("draft", ownDraft.id);
+        return prev;
+      },
+      { replace: true },
+    );
     setStep(2);
   }
   async function next(e: React.FormEvent<HTMLFormElement>) {
