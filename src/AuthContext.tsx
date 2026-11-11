@@ -1,7 +1,16 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
-import type { Session } from '@supabase/supabase-js';
-import { supabase } from './lib/supabaseClient';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+} from "react";
+import type { ReactNode } from "react";
+import type { Session } from "@supabase/supabase-js";
+import { pushOwner } from "./orders/pushStore";
+import { disableOrderPush } from "./orders/pushService";
+import { supabase } from "./lib/supabaseClient";
 
 export type MorfiProfile = {
   id: string;
@@ -20,6 +29,8 @@ type AuthContextValue = {
   loading: boolean;
   session: Session | null;
   profile: MorfiProfile | null;
+  isSeller: boolean;
+  sellerSetupPending: boolean;
   refreshProfile: (userId?: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
@@ -31,34 +42,69 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<MorfiProfile | null>(null);
   const [loading, setLoading] = useState(Boolean(supabase));
 
+  const [isSeller, setIsSeller] = useState(false);
+  const [sellerSetupPending, setSellerSetupPending] = useState(false);
+  const activeUser = useRef<string | null>(null);
+
+  async function retainDeviceOwner(userId: string | null) {
+    try {
+      const owner = await pushOwner();
+      if (activeUser.current === userId && owner !== userId)
+        await pushOwner(null);
+    } catch {
+      /* No browser storage: background notices stay disabled. */
+    }
+  }
+
   async function loadProfile(userId: string) {
     if (!supabase) return;
     const { data, error } = await supabase.auth.getUser();
     if (error) throw error;
     if (data.user?.id !== userId) {
+      if (activeUser.current !== userId) return;
       setProfile(null);
+      setIsSeller(false);
+      setSellerSetupPending(false);
       return;
     }
-    const metadata = data.user.user_metadata;
-    setProfile({
-      id: data.user.id,
-      full_name: typeof metadata.full_name === 'string' ? metadata.full_name : '',
-      phone: typeof metadata.phone === 'string' ? metadata.phone : null,
-      dni: typeof metadata.dni === 'string' ? metadata.dni : null,
-      enabled_panels: Array.isArray(metadata.enabled_panels)
-        ? metadata.enabled_panels.filter((panel: unknown): panel is string => typeof panel === 'string')
-        : [],
-      seller_alias: typeof metadata.seller_alias === 'string' ? metadata.seller_alias : null,
-      seller_holder: typeof metadata.seller_holder === 'string' ? metadata.seller_holder : null,
-      seller_location: typeof metadata.seller_location === 'string' ? metadata.seller_location : null,
-      seller_directions: typeof metadata.seller_directions === 'string' ? metadata.seller_directions : null,
-    });
+    const [profileResult, memberships, drafts] = await Promise.all([
+      supabase
+        .from("morfi_profiles")
+        .select(
+          "id,full_name,phone,dni,enabled_panels,seller_alias,seller_holder,seller_location,seller_directions",
+        )
+        .eq("id", userId)
+        .single(),
+      supabase
+        .from("morfi_business_memberships")
+        .select("business_id")
+        .eq("user_id", userId)
+        .in("role", ["owner", "manager"])
+        .limit(1),
+      supabase
+        .from("morfi_seller_setup_drafts")
+        .select("id")
+        .eq("user_id", userId)
+        .is("result_business_id", null)
+        .is("parent_business_id", null)
+        .limit(1),
+    ]);
+    if (profileResult.error) throw profileResult.error;
+    if (memberships.error) throw memberships.error;
+    if (activeUser.current !== userId) return;
+    setProfile(profileResult.data);
+    setIsSeller(Boolean(memberships.data?.length));
+    setSellerSetupPending(
+      Boolean(drafts.data?.length) && !memberships.data?.length,
+    );
   }
 
   async function refreshProfile(userId?: string) {
     const targetUserId = userId ?? session?.user.id;
     if (!targetUserId) {
       setProfile(null);
+      setIsSeller(false);
+      setSellerSetupPending(false);
       return;
     }
     await loadProfile(targetUserId);
@@ -68,54 +114,85 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!supabase) return;
     let active = true;
     void supabase.auth.getSession().then(async ({ data, error }) => {
-      if (error) console.error('No se pudo recuperar la sesión de MORFI:', error.message);
+      if (error)
+        console.error(
+          "No se pudo recuperar la sesión de MORFI:",
+          error.message,
+        );
       if (!active) return;
+      activeUser.current = data.session?.user.id ?? null;
+      if (typeof indexedDB !== "undefined")
+        void retainDeviceOwner(activeUser.current);
       setSession(data.session);
       try {
         if (data.session) await loadProfile(data.session.user.id);
       } catch (profileError) {
-        console.error('No se pudo cargar el perfil de MORFI:', profileError);
+        console.error("No se pudo cargar el perfil de MORFI:", profileError);
       } finally {
         if (active) setLoading(false);
       }
     });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      if (!nextSession) {
-        setProfile(null);
-        setLoading(false);
-        return;
-      }
-      window.setTimeout(() => {
-        void loadProfile(nextSession.user.id).catch(error => {
-          console.error('No se pudo cargar el perfil de MORFI:', error);
-        }).finally(() => setLoading(false));
-      }, 0);
-    });
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (_event, nextSession) => {
+        setSession(nextSession);
+        if (activeUser.current !== nextSession?.user.id) {
+          setProfile(null);
+          setIsSeller(false);
+          setSellerSetupPending(false);
+          setLoading(Boolean(nextSession));
+          if (typeof indexedDB !== "undefined")
+            void retainDeviceOwner(nextSession?.user.id ?? null);
+        }
+        activeUser.current = nextSession?.user.id ?? null;
+        if (!nextSession) {
+          setProfile(null);
+          setIsSeller(false);
+          setSellerSetupPending(false);
+          setLoading(false);
+          return;
+        }
+        window.setTimeout(() => {
+          if (activeUser.current !== nextSession.user.id) return;
+          void loadProfile(nextSession.user.id)
+            .catch((error) => {
+              console.error("No se pudo cargar el perfil de MORFI:", error);
+            })
+            .finally(() => {
+              if (activeUser.current === nextSession.user.id) setLoading(false);
+            });
+        }, 0);
+      },
+    );
     return () => {
       active = false;
       listener.subscription.unsubscribe();
     };
   }, []);
 
-  const value = useMemo<AuthContextValue>(() => ({
-    configured: Boolean(supabase),
-    loading,
-    session,
-    profile,
-    refreshProfile,
-    async signOut() {
-      if (!supabase) throw new Error('Supabase no está configurado.');
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-    },
-  }), [loading, session, profile]);
+  const value = useMemo<AuthContextValue>(
+    () => ({
+      configured: Boolean(supabase),
+      loading,
+      session,
+      profile,
+      isSeller,
+      sellerSetupPending,
+      refreshProfile,
+      async signOut() {
+        if (!supabase) throw new Error("Supabase no está configurado.");
+        if (typeof indexedDB !== "undefined") await disableOrderPush();
+        const { error } = await supabase.auth.signOut();
+        if (error) throw error;
+      },
+    }),
+    [loading, session, profile, isSeller, sellerSetupPending],
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {
   const value = useContext(AuthContext);
-  if (!value) throw new Error('useAuth debe usarse dentro de AuthProvider.');
+  if (!value) throw new Error("useAuth debe usarse dentro de AuthProvider.");
   return value;
 }
