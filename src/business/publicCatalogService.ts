@@ -13,6 +13,8 @@ export type PublicBusiness = {
   delivery_fee: number | null;
   delivery_fee_status: 'pending' | 'free' | 'fixed' | null;
   is_open: boolean;
+  next_open_at?: string | null;
+  availability_state?: string;
   average_rating: number | null;
   review_count: number;
 };
@@ -80,6 +82,11 @@ export async function listPublishedBusinessCatalog(): Promise<PublicBusinessCata
   if (!businesses.length) return [];
 
   const businessIds = businesses.map(business => business.id);
+  const availability=await client.rpc('morfi_public_business_availability',{p_ids:businessIds});
+  if(availability.error)throw availability.error;
+  const states=new Map((availability.data as {business_id:string;is_open:boolean;state:string;next_open_at:string|null}[]).map(row=>[row.business_id,row]));
+  businesses=businesses.map(b=>({...b,is_open:states.get(b.id)?.is_open??false,next_open_at:states.get(b.id)?.next_open_at??null,availability_state:states.get(b.id)?.state}));
+
   const { data: products, error: productsError } = await client
     .from('morfi_business_products')
     .select('id, business_id, name, description, image_path, price, is_available, accepts_delivery, payment_methods, cash_discount_percent')

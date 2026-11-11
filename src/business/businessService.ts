@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabaseClient';
 
 export type ManagedBusiness = {
+  role?: string;
   id: string;
   name: string;
   description: string;
@@ -61,7 +62,7 @@ export async function listManagedBusinesses(userId: string): Promise<ManagedBusi
   const client = getSupabase();
   const { data: memberships, error: membershipsError } = await client
     .from('morfi_business_memberships')
-    .select('business_id')
+    .select('business_id,role')
     .eq('user_id', userId)
     .in('role', ['owner', 'manager']);
 
@@ -76,7 +77,7 @@ export async function listManagedBusinesses(userId: string): Promise<ManagedBusi
     .in('id', businessIds);
 
   if (error) throw error;
-  return data ?? [];
+  return (data ?? []).map(b=>({...b,role:memberships.find(m=>m.business_id===b.id)?.role}));
 }
 
 export async function createBusiness(
@@ -141,10 +142,12 @@ export async function updateBusinessLocation(
   businessId: string,
   location: string,
   directions: string,
+  name: string,
+  coordinates: {latitude:number|null;longitude:number|null},
 ): Promise<void> {
   const { error } = await getSupabase()
     .from('morfi_businesses')
-    .update({ location, directions })
+    .update({ name, location, directions, ...coordinates })
     .eq('id', businessId);
 
   if (error) throw error;
