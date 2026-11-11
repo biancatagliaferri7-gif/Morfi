@@ -2,11 +2,21 @@ import { ApplicationServer, Urgency } from "jsr:@negrel/webpush@0.5.0";
 Deno.test(
   "Deno worker can encrypt a Web Push request without contacting a real device",
   async () => {
-    const vapidKeys = await crypto.subtle.generateKey(
+    const generatedVapidKeys = await crypto.subtle.generateKey(
       { name: "ECDSA", namedCurve: "P-256" },
       true,
       ["sign", "verify"],
     );
+    const privateJwk = await crypto.subtle.exportKey("jwk", generatedVapidKeys.privateKey);
+    const publicJwk = await crypto.subtle.exportKey("jwk", generatedVapidKeys.publicKey);
+    const vapidKeys = {
+      privateKey: await crypto.subtle.importKey(
+        "jwk", privateJwk, { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"],
+      ),
+      publicKey: await crypto.subtle.importKey(
+        "jwk", publicJwk, { name: "ECDSA", namedCurve: "P-256" }, true, ["verify"],
+      ),
+    };
     const receiver = await crypto.subtle.generateKey(
       { name: "ECDH", namedCurve: "P-256" },
       true,

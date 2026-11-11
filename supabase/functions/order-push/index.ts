@@ -39,7 +39,7 @@ Deno.serve(async (request) => {
         "jwk",
         publicJwk,
         { name: "ECDSA", namedCurve: "P-256" },
-        false,
+        true,
         ["verify"],
       ),
     };
