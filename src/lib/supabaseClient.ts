@@ -22,6 +22,7 @@ export const publicSupabase: SupabaseClient | null =
   supabaseUrl && supabaseKey
     ? createClient(supabaseUrl, supabaseKey, {
         auth: {
+          storageKey: 'morfi-public-catalog',
           persistSession: false,
           autoRefreshToken: false,
           detectSessionInUrl: false,
