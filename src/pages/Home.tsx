@@ -42,9 +42,9 @@ const HeroSection: React.FC = () => (
           <TitleTicks />
         </h1>
         <h2 className="home-headline">
-          Comé rico.<br />
-          Vendé mejor.<br />
-          Ahorrá más.
+          <span className="home-headline-accent">Comé rico.</span><br />
+          <span className="home-headline-dark">Vendé mejor.</span><br />
+          <span className="home-headline-accent">Ahorrá más.</span>
         </h2>
         <p className="home-intro">
           Encontrá comida casera y ayudá a crecer a los emprendimientos de tu comunidad.

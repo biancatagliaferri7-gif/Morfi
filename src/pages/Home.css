@@ -2,6 +2,8 @@
   --home-ink: #713311;
   --home-brown: #8b3f14;
   --home-orange: #e66b18;
+  --home-headline-accent: #f14401;
+  --home-headline-dark: #413e3e;
   --home-gold: #f6a623;
   --home-muted: #755e50;
   --home-border: #f0dfcf;
@@ -134,7 +136,11 @@
 }
 
 .home-headline span {
-  color: var(--home-orange);
+  color: var(--home-headline-accent);
+}
+
+.home-headline .home-headline-dark {
+  color: var(--home-headline-dark);
 }
 
 .home-intro {
