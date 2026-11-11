@@ -19,6 +19,7 @@ import {
 } from '../orders/orderService';
 import type { MealOrder } from '../orders/orderService';
 import OrderReviewForm from './OrderReviewForm';
+import { openingLabel } from '../business/sellerSetup';
 import { messageForOrderError } from '../orders/orderErrors';
 
 type Dish = {
@@ -46,6 +47,7 @@ type Shop = {
   cover: string;
   dishes: Dish[];
   isOpen: boolean;
+  nextOpenAt?: string | null;
   acceptsDelivery: boolean;
   acceptsPickup: boolean;
   phone?: string;
@@ -101,6 +103,7 @@ function mapPublicCatalog(catalog: PublicBusinessCatalog[]): Shop[] {
       cover: dishes[0]?.image || '/portada.jpeg',
       dishes,
       isOpen: business.is_open,
+      nextOpenAt: business.next_open_at,
       acceptsDelivery: business.accepts_delivery,
       acceptsPickup: business.accepts_pickup,
       latitude: business.latitude,
@@ -222,6 +225,7 @@ export default function Hungry() {
   const [businessReviewsLoading, setBusinessReviewsLoading] = useState(false);
   const [businessReviewsError, setBusinessReviewsError] = useState('');
   const [notice, setNotice] = useState('');
+  useEffect(()=>{const refresh=()=>{if(document.visibilityState==='visible')setCatalogReload(x=>x+1);};const timer=setInterval(refresh,30000);document.addEventListener('visibilitychange',refresh);return()=>{clearInterval(timer);document.removeEventListener('visibilitychange',refresh);};},[]);
   useEffect(() => {
     let active = true;
     async function loadCatalog() {
@@ -375,7 +379,7 @@ export default function Hungry() {
         : selected.deliveryFee
     : 0;
   const total = deliveryFee === null ? null : discountedSubtotal + deliveryFee;
-  const canPlaceOrder = subtotal > 0 &&
+  const canPlaceOrder = subtotal > 0 && Boolean(selected?.isOpen) &&
     (delivery === 'pickup' ? supportsPickup : supportsDelivery && address.trim().length >= 5) &&
     selectedPaymentAvailable &&
     (delivery !== 'delivery' || deliveryFee !== null || isOrderCheckoutV2Enabled) &&
@@ -388,6 +392,7 @@ export default function Hungry() {
   const deliveryQuoteRequiresV2 = !isOrderCheckoutV2Enabled &&
     delivery === 'delivery' && deliveryFee === null;
   const checkoutBlockers = [
+    ...(!selected?.isOpen ? ['El comercio no está recibiendo pedidos ahora.' + (selected?.nextOpenAt ? ' Próxima apertura: '+openingLabel(selected.nextOpenAt) : '')] : []),
     ...(lines.length === 0 ? ['Agregá al menos un producto al carrito.'] : []),
     ...(lines.length > 0 && (delivery === 'pickup' ? !supportsPickup : !supportsDelivery)
       ? ['El emprendimiento o algún producto del carrito no admite esta modalidad de entrega.']
@@ -780,7 +785,7 @@ export default function Hungry() {
                     <p className="mt-1 text-xs font-semibold text-gray-500">
                       {shop.kind === 'supplier'
                         ? `${shop.dishes.length} productos disponibles${shop.acceptsDelivery ? ' · Delivery' : ''}`
-                        : `${shop.isOpen ? 'Abierto' : 'Cerrado'} · ${shop.acceptsPickup ? 'Retiro' : ''}${shop.acceptsPickup && shop.acceptsDelivery ? ' · ' : ''}${shop.acceptsDelivery ? 'Delivery' : ''}`}
+                        : `${shop.isOpen ? 'Abierto' : 'Cerrado'+(shop.nextOpenAt?' · Abre '+openingLabel(shop.nextOpenAt):'')} · ${shop.acceptsPickup ? 'Retiro' : ''}${shop.acceptsPickup && shop.acceptsDelivery ? ' · ' : ''}${shop.acceptsDelivery ? 'Delivery' : ''}`}
                     </p>
                     <p className="mt-2 mb-4 flex-1 text-gray-600">{shop.description}</p>
                     <p className="mb-4 font-semibold">{shop.dishes.length > 0 ? `Desde ${money(Math.min(...shop.dishes.map(d => d.price)))}` : 'Sin productos disponibles por el momento'}</p>
@@ -802,6 +807,7 @@ export default function Hungry() {
             <button onClick={() => { setSelectedId(null); setNotice(''); }} className="mb-5 font-semibold underline">← Volver a los negocios</button>
             <p className="mb-1 text-sm font-bold uppercase tracking-wide text-[#C46018]">Comidas · Emprendimiento</p>
             <h2 className="mb-2 text-2xl font-black">{selected.name}</h2>
+            <p className="mb-3 font-semibold">{selected.isOpen?'Recibiendo pedidos':'Cerrado'+(selected.nextOpenAt?' · Próxima apertura: '+openingLabel(selected.nextOpenAt):'')}</p>
             <RatingDisplay average={selected.averageRating} count={selected.reviewCount} />
             <p className="mb-6 text-gray-600">{selected.description}</p>
             {(selected.phone || selected.location ||

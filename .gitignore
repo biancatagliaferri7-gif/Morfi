@@ -31,3 +31,7 @@ dist/
 /src - copia/
 /src - copia (2)/
 /Nueva carpeta/
+.morfi-secrets.local/
+playwright-report/
+test-results/
+supabase/.temp/

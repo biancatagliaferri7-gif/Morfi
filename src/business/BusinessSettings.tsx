@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { supabase } from '../lib/supabaseClient';
+import { BankFields } from './SellerFields';
 import { isOrderCheckoutV2Enabled } from '../orders/orderService';
 
 type Settings = {
@@ -62,10 +63,10 @@ export default function BusinessSettings({ businessId }: { businessId: string })
       setError('Para cobrar por transferencia completá banco, alias, titular y CUIT de 11 números.'); return;
     }
     setBusy(true);
-    const { delivery_fee_status, payment_method, ...fields } = settings;
+    const { is_open: _isOpen, delivery_fee_status, payment_method, ...fields } = settings;
     const { data, error: saveError } = await supabase.from('morfi_businesses').update({
       ...fields,
-      payment_methods: payment_method,
+      payment_methods: [...new Set(['cash',...payment_method])],
       contact_phone: settings.contact_phone.trim() || null,
       phone_is_public: settings.phone_is_public && Boolean(settings.contact_phone.trim()),
       bank_name: settings.bank_name.trim() || null,
@@ -77,6 +78,7 @@ export default function BusinessSettings({ businessId }: { businessId: string })
     }).eq('id', businessId).select('id').single();
     setBusy(false);
     if (saveError || !data) { setError('No se pudo guardar cómo vendés. Revisá tu conexión y volvé a intentar.'); return; }
+    window.dispatchEvent(new Event('morfi-business-changed'));
     setNotice('Guardado. Los clientes verán estas opciones al pedir.');
   }
 
@@ -85,18 +87,17 @@ export default function BusinessSettings({ businessId }: { businessId: string })
     {error && <p role="alert" className="mt-3 text-sm font-semibold text-red-800">{error}</p>}
     {!settings && !error && <p role="status" className="mt-2 text-sm">Cargando opciones…</p>}
     {settings && <form onSubmit={event => void save(event)} className="mt-3 space-y-3">
-      <label className="flex items-center gap-2"><input type="checkbox" checked={settings.is_open} onChange={event => change('is_open', event.target.checked)} />Estoy tomando pedidos</label>
+
       <div className="flex flex-wrap gap-4">{(['accepts_pickup', 'accepts_delivery'] as const).map(key => <label key={key} className="flex items-center gap-2"><input type="checkbox" checked={settings[key]} onChange={event => change(key, event.target.checked)} />{key === 'accepts_pickup' ? 'Retiro en el local' : 'Entrega a domicilio'}</label>)}</div>
       {settings.accepts_delivery && <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm font-semibold">Costo de entrega<select value={settings.delivery_fee_status} onChange={event => change('delivery_fee_status', event.target.value as Settings['delivery_fee_status'])} className={fieldClass}>{isOrderCheckoutV2Enabled && <option value="pending">Confirmar con cada pedido</option>}<option value="free">Gratis</option><option value="fixed">Tarifa fija</option></select></label>
         {settings.delivery_fee_status === 'fixed' && <label className="text-sm font-semibold">Importe en pesos<input type="number" min="0.01" step="0.01" value={settings.delivery_fee} onChange={event => change('delivery_fee', Number(event.target.value))} className={fieldClass} required /></label>}
       </div>}
-      <fieldset><legend className="text-sm font-semibold">Cobrás con</legend>{(['cash', 'transfer'] as const).map(method => <label key={method} className="mr-4 inline-flex items-center gap-2"><input type="checkbox" checked={settings.payment_method.includes(method)} onChange={event => change('payment_method', event.target.checked ? [...settings.payment_method, method] : settings.payment_method.filter(value => value !== method))} />{method === 'cash' ? 'Efectivo' : 'Transferencia'}</label>)}</fieldset>
+      <label className="block font-semibold">¿Aceptás pago con transferencia?<select className={fieldClass} value={String(settings.payment_method.includes('transfer'))} onChange={e=>change('payment_method',e.target.value==='true'?['cash','transfer']:['cash'])}><option value="false">No</option><option value="true">Sí</option></select></label>
+      <p className="text-sm">El efectivo siempre está disponible.</p>
       <label className="block text-sm font-semibold">Teléfono de consultas<input type="tel" maxLength={40} value={settings.contact_phone} onChange={event => change('contact_phone', event.target.value)} className={fieldClass} /></label>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={settings.phone_is_public} onChange={event => change('phone_is_public', event.target.checked)} />Mostrar mi teléfono en el catálogo</label>
-      {settings.payment_method.includes('transfer') && <div className="grid gap-3 sm:grid-cols-2">{([
-        ['bank_name', 'Banco o billetera'], ['transfer_alias', 'Alias para transferir'], ['transfer_holder', 'Titular'], ['bank_cuit', 'CUIT del titular'],
-      ] as const).map(([key, label]) => <label key={key} className="text-sm font-semibold">{label}<input value={settings[key]} onChange={event => change(key, event.target.value)} maxLength={key === 'bank_cuit' ? 13 : 120} className={fieldClass} required /></label>)}</div>}
+      {settings.payment_method.includes('transfer') && <BankFields data={settings} onChange={patch=>setSettings(s=>s?{...s,...patch}:s)}/>}
       {notice && <p role="status" className="text-sm font-semibold text-green-800">{notice}</p>}
       <button disabled={busy} className="rounded-xl bg-[#8B3F14] px-5 py-3 font-bold text-white disabled:opacity-60">{busy ? 'Guardando…' : 'Guardar cómo vendés'}</button>
     </form>}

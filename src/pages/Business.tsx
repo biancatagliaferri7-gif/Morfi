@@ -1,10 +1,10 @@
 
 import { useEffect, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import BusinessWorkflow from './BusinessWorkflow';
 import type { BusinessSection } from './BusinessWorkflow';
 import { useAuth } from '../AuthContext';
+import { supabase } from '../lib/supabaseClient';
 import { isIngredient, isRecipe } from '../business/calculations';
 import {
   deliveryFeeStatusLabel,
@@ -20,7 +20,6 @@ import {
 import type { MealOrder, OrderStatus } from '../orders/orderService';
 import { nextVendorStatuses as nextOrderStatuses } from '../orders/orderPresentation';
 import {
-  createBusiness,
   createBusinessProduct,
   deleteBusinessProduct,
   listBusinessProducts,
@@ -33,19 +32,19 @@ import {
   updateBusinessPublication,
   updateBusinessProduct,
 } from '../business/businessService';
-import { argentinePaymentProviders } from '../business/paymentOptions';
 import {
   getPendingBusinessSetup,
   removePendingBusinessSetup,
   savePendingBusinessSetup,
 } from '../business/pendingRegistration';
 import type { PendingBusinessSetup } from '../business/pendingRegistration';
-import BusinessLocationMap from '../components/BusinessLocationMap';
 import BusinessSettings from '../business/BusinessSettings';
+import { LocationFields } from '../business/SellerFields';
+import { OrderNotificationSettings, useOrderAlerts } from '../orders/OrderNotifications';
+import BusinessOperations, { BusinessHours } from '../business/BusinessOperations';
 import type {
   BusinessProduct,
   BusinessProductInput,
-  BusinessRegistrationInput,
 } from '../business/businessService';
 import type { ManagedBusiness } from '../business/businessService';
 import type { Ingredient, Recipe } from '../business/types';
@@ -170,7 +169,7 @@ export default function Business() {
   const [price, setPrice] = useState('');
   const [isAvailable, setIsAvailable] = useState(true);
   const [acceptsDelivery, setAcceptsDelivery] = useState(false);
-  const [productPaymentMethods, setProductPaymentMethods] = useState<('cash' | 'transfer')[]>(['cash', 'transfer']);
+  const [productPaymentMethods, setProductPaymentMethods] = useState<('cash' | 'transfer')[]>(['cash']);
   const [cashDiscountPercent, setCashDiscountPercent] = useState('');
   const [yieldQuantity, setYieldQuantity] = useState('');
   const [additionalCosts, setAdditionalCosts] = useState('0');
@@ -180,46 +179,29 @@ export default function Business() {
   const [customIngredient, setCustomIngredient] = useState('');
   const [productPhoto, setProductPhoto] = useState('');
   const [productPhotoFile, setProductPhotoFile] = useState<File | null>(null);
-  const [stockQuantity, setStockQuantity] = useState('1');
+  const [stockQuantity, setStockQuantity] = useState('0');
   const photoInput = useRef<HTMLInputElement>(null);
   const cameraInput = useRef<HTMLInputElement>(null);
   const [formError, setFormError] = useState('');
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersLoadedFor,setOrdersLoadedFor]=useState<string|null>(null);
   const [ordersError, setOrdersError] = useState('');
   const [orderStatusBusyId, setOrderStatusBusyId] = useState<string | null>(null);
   const [managedBusinesses, setManagedBusinesses] = useState<ManagedBusiness[]>([]);
   const [businessesLoading, setBusinessesLoading] = useState(true);
   const [businessesError, setBusinessesError] = useState('');
   const [businessFormError, setBusinessFormError] = useState('');
-  const [businessName, setBusinessName] = useState('');
-  const [businessDescription, setBusinessDescription] = useState('');
-  const [businessPhone, setBusinessPhone] = useState(profile?.phone ?? '');
-  const [businessPhonePublic, setBusinessPhonePublic] = useState(true);
-  const [businessLocation, setBusinessLocation] = useState('');
-  const [businessDirections, setBusinessDirections] = useState('');
-  const [businessLatitude, setBusinessLatitude] = useState<number | null>(null);
-  const [businessLongitude, setBusinessLongitude] = useState<number | null>(null);
-  const [businessLocationNotice, setBusinessLocationNotice] = useState('');
-  const [businessLogo, setBusinessLogo] = useState<File | null>(null);
-  const [businessLogoPreview, setBusinessLogoPreview] = useState('');
-  const [acceptsCash, setAcceptsCash] = useState(true);
-  const [acceptsTransfer, setAcceptsTransfer] = useState(false);
-  const businessLogoInput = useRef<HTMLInputElement>(null);
   const managedLogoInput = useRef<HTMLInputElement>(null);
   const [logoBusinessId, setLogoBusinessId] = useState<string | null>(null);
   const [uploadingLogoBusinessId, setUploadingLogoBusinessId] = useState<string | null>(null);
-  const [bankName, setBankName] = useState('');
-  const [otherBankName, setOtherBankName] = useState('');
-  const [transferAlias, setTransferAlias] = useState('');
-  const [transferHolder, setTransferHolder] = useState('');
-  const [bankCuit, setBankCuit] = useState('');
-  const [creatingBusiness, setCreatingBusiness] = useState(false);
   const [businessNotice, setBusinessNotice] = useState('');
   const [publicationNotice, setPublicationNotice] = useState('');
   const [publicationError, setPublicationError] = useState('');
   const [publicationBusyId, setPublicationBusyId] = useState<string | null>(null);
   const [editingLocationBusinessId, setEditingLocationBusinessId] = useState<string | null>(null);
   const [locationDraft, setLocationDraft] = useState('');
+  const [businessNameDraft, setBusinessNameDraft] = useState('');
+  const [coordinateDraft,setCoordinateDraft] = useState<{latitude:number|null;longitude:number|null}>({latitude:null,longitude:null});
   const [directionsDraft, setDirectionsDraft] = useState('');
   const [locationSaveError, setLocationSaveError] = useState('');
   const [locationSaveNotice, setLocationSaveNotice] = useState('');
@@ -227,7 +209,8 @@ export default function Business() {
   const [phoneVisibilityError, setPhoneVisibilityError] = useState('');
   const [phoneVisibilitySavingId, setPhoneVisibilitySavingId] = useState<string | null>(null);
   const [businessesReload, setBusinessesReload] = useState(0);
-  const [selectedBusinessId, setSelectedBusinessId] = useState('');
+  const [searchParams]=useSearchParams();
+  const [selectedBusinessId, setSelectedBusinessId] = useState(searchParams.get('business')??'');
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsError, setProductsError] = useState('');
   const [productsNotice, setProductsNotice] = useState('');
@@ -235,19 +218,26 @@ export default function Business() {
   const [savingProduct, setSavingProduct] = useState(false);
   const [productActionId, setProductActionId] = useState<string | null>(null);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
-  const [tab, setTab] = useState<'productos' | 'pedidos' | BusinessSection>('productos');
+  const [tab, setTab] = useState<'productos' | 'pedidos' | BusinessSection>(searchParams.get('section')==='pedidos'?'pedidos':'productos');
+  useEffect(()=>{
+    if(!selectedBusinessId||!supabase)return;
+    let active=true;
+    const load=()=>{void supabase!.rpc('morfi_managed_business_settings',{p_business_id:selectedBusinessId}).then(r=>{
+      if(active&&!r.error&&r.data?.[0]){
+        const row=r.data[0];
+        productDefaults.current={delivery:row.accepts_delivery,payments:[...new Set(['cash',...row.payment_method])] as ('cash'|'transfer')[]};
+        if(!editingProductId){setAcceptsDelivery(productDefaults.current.delivery);setProductPaymentMethods(productDefaults.current.payments);}
+      }
+    });};
+    load();window.addEventListener('morfi-business-changed',load);
+    return()=>{active=false;window.removeEventListener('morfi-business-changed',load);};
+  },[selectedBusinessId,editingProductId]);
+  const productDefaults=useRef<{delivery:boolean;payments:('cash'|'transfer')[]}>({delivery:false,payments:['cash']});
+  const orderAlerts=useOrderAlerts(orders,userId??'',selectedBusinessId,ordersLoadedFor===selectedBusinessId);
+  useEffect(()=>{const id=searchParams.get('order');if(id&&ordersLoadedFor===selectedBusinessId&&tab==='pedidos'){const element=document.getElementById('order-'+id);element?.scrollIntoView({block:'center'});element?.focus();}},[ordersLoadedFor,selectedBusinessId,searchParams,tab]);
   const recipeLinkedProduct = products.find(product => String(product.id) === editingProductId)?.recipeId;
   const packageFactor = (unit: IngredientUnit) => unit === 'kg' || unit === 'l' ? 1000 : 1;
 
-  useEffect(() => {
-    if (!businessLogo) {
-      setBusinessLogoPreview('');
-      return;
-    }
-    const preview = URL.createObjectURL(businessLogo);
-    setBusinessLogoPreview(preview);
-    return () => URL.revokeObjectURL(preview);
-  }, [businessLogo]);
 
   useEffect(() => {
     let active = true;
@@ -328,134 +318,22 @@ export default function Business() {
     };
   }, [userId, businessesReload, session?.user.email]);
 
-  async function registerBusiness(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmedName = businessName.trim();
-    const trimmedDescription = businessDescription.trim();
-    const trimmedPhone = businessPhone.trim();
-    const trimmedLocation = businessLocation.trim();
-    const normalizedCuit = bankCuit.replace(/\D/g, '');
-    const selectedBankName = bankName === 'Otro' ? otherBankName.trim() : bankName.trim();
-    setBusinessNotice('');
-    setBusinessFormError('');
-    if (!userId) {
-      setBusinessFormError('No se pudo identificar la sesión autenticada. Volvé a ingresar e intentá nuevamente.');
-      return;
-    }
-    if (!trimmedName) {
-      setBusinessFormError('Ingresá el nombre de tu emprendimiento.');
-      return;
-    }
-    if (!trimmedLocation || !trimmedPhone) {
-      setBusinessFormError('Completá la dirección del punto de venta y el WhatsApp para recibir pedidos.');
-      return;
-    }
-    if (trimmedName.length > 120 || trimmedDescription.length > 2000 ||
-      trimmedLocation.length > 180 || businessDirections.trim().length > 300) {
-      setBusinessFormError('Revisá los largos: nombre hasta 120, descripción hasta 2000, dirección hasta 180 y referencia hasta 300 caracteres.');
-      return;
-    }
-    if (!acceptsCash && !acceptsTransfer) {
-      setBusinessFormError('Elegí al menos un medio de pago.');
-      return;
-    }
-    if (acceptsTransfer && (
-      !selectedBankName ||
-      !transferAlias.trim() ||
-      !transferHolder.trim() ||
-      !/^\d{11}$/.test(normalizedCuit)
-    )) {
-      setBusinessFormError('Para recibir pedidos, completá banco, alias, titular y un CUIT de 11 números.');
-      return;
-    }
-    if (businessLogo && (
-      !['image/jpeg', 'image/png', 'image/webp'].includes(businessLogo.type) ||
-      businessLogo.size > 5 * 1024 * 1024
-    )) {
-      setBusinessFormError('El logo debe ser JPG, PNG o WebP y pesar hasta 5 MB.');
-      return;
-    }
-
-    setCreatingBusiness(true);
-    try {
-      const businessInput: BusinessRegistrationInput = {
-        name: trimmedName,
-        description: trimmedDescription,
-        contact_phone: trimmedPhone,
-        phone_is_public: businessPhonePublic,
-        location: trimmedLocation,
-        directions: businessDirections.trim(),
-        latitude: businessLatitude,
-        longitude: businessLongitude,
-        bank_name: acceptsTransfer ? selectedBankName : null,
-        transfer_alias: acceptsTransfer ? transferAlias.trim() : null,
-        transfer_holder: acceptsTransfer ? transferHolder.trim() : null,
-        bank_cuit: acceptsTransfer ? normalizedCuit : null,
-        payment_methods: [
-          ...(acceptsCash ? ['cash' as const] : []),
-          ...(acceptsTransfer ? ['transfer' as const] : []),
-        ],
-      };
-      const business = await createBusiness(userId, businessInput);
-      setManagedBusinesses(current => [business, ...current.filter(item => item.id !== business.id)]);
-      setSelectedBusinessId(business.id);
-      setBusinessName('');
-      setBusinessDescription('');
-      setBusinessPhone(profile?.phone ?? '');
-      setBusinessPhonePublic(true);
-      setBusinessLocation('');
-      setBusinessDirections('');
-      setBusinessLatitude(null);
-      setBusinessLongitude(null);
-      setBusinessLocationNotice('');
-      setBankName('');
-      setTransferAlias('');
-      setTransferHolder('');
-      setBankCuit('');
-      setAcceptsCash(true);
-      setAcceptsTransfer(false);
-      setBankName('');
-      setOtherBankName('');
-      const selectedLogo = businessLogo;
-      setBusinessLogo(null);
-      if (selectedLogo) {
-        try {
-          const logoPath = await uploadBusinessLogo(business.id, selectedLogo);
-          setManagedBusinesses(current => current.map(item =>
-            item.id === business.id ? { ...item, logo_path: logoPath } : item,
-          ));
-          setBusinessNotice('Emprendimiento y logo guardados en Supabase. Ya podés continuar con tu panel.');
-        } catch (logoError) {
-          const detail = logoError instanceof Error ? logoError.message : 'Error inesperado.';
-          setBusinessFormError(`El emprendimiento se guardó, pero no se pudo subir el logo: ${detail}. Podés volver a intentarlo en la lista.`);
-        }
-      } else {
-        setBusinessNotice('Emprendimiento registrado en Supabase y asociado a tu cuenta como propietario.');
-      }
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : 'Error inesperado.';
-      setBusinessFormError(`No se pudo registrar el emprendimiento: ${detail}`);
-    } finally {
-      setCreatingBusiness(false);
-    }
-  }
-
   async function saveBusinessLocation(businessId: string) {
     const trimmedLocation = locationDraft.trim();
     const trimmedDirections = directionsDraft.trim();
     setLocationSaveError('');
     setLocationSaveNotice('');
-    if (!trimmedLocation || trimmedLocation.length > 180 || trimmedDirections.length > 300) {
-      setLocationSaveError('Ingresá una dirección de hasta 180 caracteres y una referencia opcional de hasta 300.');
+    if (!businessNameDraft.trim() || !trimmedLocation || trimmedLocation.length > 180 || trimmedDirections.length > 300 || coordinateDraft.latitude===null || coordinateDraft.longitude===null) {
+      setLocationSaveError('Completá el nombre, la dirección y el punto del comercio en el mapa.');
       return;
     }
 
     setSavingLocationBusinessId(businessId);
     try {
-      await updateBusinessLocation(businessId, trimmedLocation, trimmedDirections);
+      await updateBusinessLocation(businessId, trimmedLocation, trimmedDirections, businessNameDraft.trim(), coordinateDraft);
       setManagedBusinesses(current => current.map(business =>
         business.id === businessId
-          ? { ...business, location: trimmedLocation, directions: trimmedDirections }
+          ? { ...business, name:businessNameDraft.trim(), location: trimmedLocation, directions: trimmedDirections, ...coordinateDraft }
           : business,
       ));
       setEditingLocationBusinessId(null);
@@ -484,31 +362,6 @@ export default function Business() {
     }
   }
 
-  function useBusinessLocation() {
-    setBusinessLocationNotice('');
-    if (!navigator.geolocation) {
-      setBusinessLocationNotice('Este dispositivo o navegador no ofrece ubicación GPS. Podés escribir la dirección manualmente.');
-      return;
-    }
-
-    setBusinessLocationNotice('Solicitando permiso para acceder a tu ubicación…');
-    navigator.geolocation.getCurrentPosition(
-      position => {
-        setBusinessLatitude(position.coords.latitude);
-        setBusinessLongitude(position.coords.longitude);
-        setBusinessLocationNotice('Ubicación guardada. Podés corregir la dirección manualmente.');
-      },
-      error => {
-        const detail = error.code === error.PERMISSION_DENIED
-          ? 'No se autorizó el acceso a la ubicación.'
-          : error.code === error.POSITION_UNAVAILABLE
-            ? 'El GPS no está disponible en este momento.'
-            : 'No se pudo obtener la ubicación a tiempo.';
-        setBusinessLocationNotice(`${detail} Podés escribir la dirección manualmente.`);
-      },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 },
-    );
-  }
 
   async function uploadManagedBusinessLogo(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -541,12 +394,13 @@ export default function Business() {
     try {
       const updatedBusiness = await updateBusinessPublication(business.id, !business.is_published);
       setManagedBusinesses(current => current.map(item =>
-        item.id === updatedBusiness.id ? updatedBusiness : item
+        item.id === updatedBusiness.id ? {...item,...updatedBusiness} : item
       ));
+      window.dispatchEvent(new Event('morfi-business-changed'));
       setPublicationNotice(
         updatedBusiness.is_published
           ? `${updatedBusiness.name} está publicado y puede aparecer en Tengo hambre cuando tenga productos disponibles.`
-          : `${updatedBusiness.name} está pausado y ya no aparecerá en el catálogo público.`,
+          : `${updatedBusiness.name} está oculto y ya no aparecerá en el catálogo público.`,
       );
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Error inesperado.';
@@ -599,7 +453,7 @@ export default function Business() {
       setOrdersError('');
       try {
         const data = await listBusinessMealOrders(selectedBusinessId);
-        if (active) setOrders(data);
+        if (active) {setOrders(data);setOrdersLoadedFor(selectedBusinessId);}
       } catch (error) {
         const detail = error instanceof Error ? error.message : 'Error inesperado.';
         if (active) {
@@ -621,11 +475,7 @@ export default function Business() {
     };
   }, [selectedBusinessId]);
 
-  const sales = orders
-    .filter(order => order.status === 'delivered' && order.total !== null)
-    .reduce((sum, order) => sum + (order.total ?? 0), 0);
 
-  const pending = orders.filter(order => !['delivered', 'rejected', 'cancelled'].includes(order.status)).length;
   const recipeYield = Number(yieldQuantity);
   const indirectCost = Number(additionalCosts);
   const rawMaterialCost = ingredientCosts.reduce((sum, item) => {
@@ -652,6 +502,29 @@ export default function Business() {
     ? salePrice - totalCostPerPortion
     : null;
 
+  function resetProductForm() {
+    setName('');
+    setDescription('');
+    setPrice('');
+    setIsAvailable(true);
+    setAcceptsDelivery(productDefaults.current.delivery);
+    setProductPaymentMethods(productDefaults.current.payments);
+    setCashDiscountPercent('');
+    setYieldQuantity('');
+    setAdditionalCosts('0');
+    setIngredientCosts(productTypes.find(item => item.name === productType)?.ingredients.map(ingredientDraft) ?? []);
+    setCustomIngredient('');
+    setCustomProductType('');
+    setProductPhoto('');
+    setProductPhotoFile(null);
+    setStockQuantity('0');
+    setEditingProductId(null);
+    if (photoInput.current) photoInput.current.value = '';
+    if (cameraInput.current) cameraInput.current.value = '';
+    setFormError('');
+    setSaleMode('direct');
+  }
+
   async function addProduct(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -672,7 +545,7 @@ export default function Business() {
       name.trim().length > 160 ||
       description.trim().length > 1000 ||
       !Number.isFinite(amount) || amount <= 0 ||
-      stockQuantity.trim() === '' || !Number.isInteger(stock) || stock < 0 || stock > 2147483647 ||
+      !Number.isInteger(stock) || stock < 0 || stock > 2147483647 ||
       (cashDiscountPercent.trim() !== '' && (
         !Number.isFinite(Number(cashDiscountPercent)) ||
         Number(cashDiscountPercent) < 0 ||
@@ -789,7 +662,7 @@ export default function Business() {
       stock_quantity: recipeLinkedProduct ? 0 : stock,
       is_available: isAvailable,
       accepts_delivery: acceptsDelivery,
-      payment_methods: productPaymentMethods,
+      payment_methods: [...new Set<'cash'|'transfer'>(['cash',...productPaymentMethods])],
       cash_discount_percent: cashDiscountPercent.trim() ? Number(cashDiscountPercent) : null,
     };
 
@@ -808,8 +681,8 @@ export default function Business() {
         ? current.map(product => product.id === savedProduct.id ? savedProduct : product)
         : [savedProduct, ...current]);
       setProductsNotice(editingProductId
-        ? 'Producto actualizado en Supabase.'
-        : 'Producto registrado en Supabase.');
+        ? 'Producto actualizado.'
+        : 'Producto guardado. Ya podés ofrecerlo a tus clientes.');
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'Error inesperado.';
       setProductsError(`No se pudo guardar el producto en Supabase: ${detail}`);
@@ -817,25 +690,7 @@ export default function Business() {
       return;
     }
 
-    setName('');
-    setDescription('');
-    setPrice('');
-    setIsAvailable(true);
-    setAcceptsDelivery(false);
-    setProductPaymentMethods(['cash', 'transfer']);
-    setCashDiscountPercent('');
-    setYieldQuantity('');
-    setAdditionalCosts('0');
-    setIngredientCosts(productTypes.find(item => item.name === productType)?.ingredients.map(ingredientDraft) ?? []);
-    setCustomIngredient('');
-    setCustomProductType('');
-    setProductPhoto('');
-    setProductPhotoFile(null);
-    setStockQuantity('1');
-    setEditingProductId(null);
-    if (photoInput.current) photoInput.current.value = '';
-    if (cameraInput.current) cameraInput.current.value = '';
-    setFormError('');
+    resetProductForm();
     setSavingProduct(false);
   }
 
@@ -970,7 +825,7 @@ export default function Business() {
   async function reviewTransfer(order: MealOrder, approved: boolean) {
     const prompt = approved
       ? '¿Confirmás que verificaste manualmente el ingreso de esta transferencia?'
-      : '¿Rechazás la transferencia? El pedido también se marcará como rechazado y se devolverá el stock.';
+      : '¿Rechazás la transferencia? El pedido también se marcará como rechazado.';
     if (!window.confirm(prompt)) return;
 
     setOrderStatusBusyId(order.id);
@@ -998,7 +853,7 @@ export default function Business() {
 
         <div className="mb-8">
           <span className="text-sm font-bold text-green-700">
-            MORFI · PANEL DEMOSTRATIVO
+            MORFI · TU COMERCIO
           </span>
           <h1 className="text-3xl md:text-4xl font-black mt-2">
             Mi emprendimiento
@@ -1008,9 +863,38 @@ export default function Business() {
           </p>
         </div>
 
-        <section className="mb-8 rounded-2xl border border-green-100 bg-white p-6 shadow-sm" aria-labelledby="business-account-heading">
+          <label htmlFor="selected-business" className="block text-sm font-bold">
+            Emprendimiento para gestionar productos
+            <select
+              id="selected-business"
+              value={selectedBusinessId}
+              onChange={event => {
+                resetProductForm();
+                setSelectedBusinessId(event.target.value);
+                setEditingProductId(null);
+                setProductPhoto('');
+                setProductPhotoFile(null);
+                setStockQuantity('0');
+                setProductsNotice('');
+                setProductsError('');
+              }}
+              disabled={businessesLoading || managedBusinesses.length === 0 || productsLoading || savingProduct || productActionId !== null}
+              className="mt-2 w-full rounded-xl border border-gray-300 bg-white p-3 font-normal disabled:bg-gray-100"
+            >
+              <option value="">
+                {businessesLoading ? 'Cargando emprendimientos…' : 'Seleccioná un emprendimiento'}
+              </option>
+              {managedBusinesses.map(business => (
+                <option key={business.id} value={business.id}>{business.name}</option>
+              ))}
+            </select>
+          </label>
+        {orderAlerts.notice&&<aside role="status" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border-2 border-orange-500 bg-orange-50 p-4"><p className="font-bold">Nuevo pedido {orderAlerts.notice.number?'#'+orderAlerts.notice.number:''}</p><Link className="font-bold underline" to={'/business?section=pedidos&business='+orderAlerts.notice.businessId+'&order='+orderAlerts.notice.orderId} onClick={()=>{setTab('pedidos');setSelectedBusinessId(orderAlerts.notice!.businessId);orderAlerts.dismiss();}}>Ver pedido</Link><button type="button" className="min-h-11 underline" onClick={orderAlerts.dismiss}>Cerrar aviso</button></aside>}
+        {selectedBusinessId && <BusinessOperations key={selectedBusinessId} businessId={selectedBusinessId} productCount={products.length} onPublished={()=>setManagedBusinesses(rows=>rows.map(row=>row.id===selectedBusinessId?{...row,is_published:true}:row))} />}
+        <details className="mb-5 rounded-2xl border border-green-100 bg-white p-6 shadow-sm" ><summary className="cursor-pointer font-bold">Configuración del comercio</summary>
+          {businessFormError && <p role="alert" className="mt-3 text-red-800">{businessFormError}</p>}
           <h2 id="business-account-heading" className="text-xl font-black">Mis emprendimientos</h2>
-          <p className="mt-1 text-sm text-gray-600">Estos registros se guardan en Supabase y solo se consultan los que administrás.</p>
+          <p className="mt-1 text-sm text-gray-600">Administrá los datos de tus comercios y sucursales.</p>
 
           {businessesLoading && <p className="mt-4 text-sm text-gray-600" role="status">Cargando tus emprendimientos…</p>}
           {businessesError && (
@@ -1073,13 +957,15 @@ export default function Business() {
                           current === business.id ? null : business.id,
                         );
                         setLocationDraft(business.location ?? '');
+                        setBusinessNameDraft(business.name);
+                        setCoordinateDraft({latitude:business.latitude,longitude:business.longitude});
                         setDirectionsDraft(business.directions ?? '');
                         setLocationSaveError('');
                         setLocationSaveNotice('');
                       }}
                       className="rounded-xl border border-[#E8C9AA] px-4 py-2 font-bold"
                     >
-                      {editingLocationBusinessId === business.id ? 'Cancelar ubicación' : 'Editar ubicación'}
+                      {editingLocationBusinessId === business.id ? 'Cancelar cambios' : 'Datos del comercio'}
                     </button>
                     <button
                       type="button"
@@ -1100,21 +986,13 @@ export default function Business() {
                     >
                       {publicationBusyId === business.id
                         ? 'Actualizando…'
-                        : business.is_published ? 'Pausar negocio' : 'Publicar negocio'}
+                        : business.is_published ? 'Ocultar del catálogo' : 'Publicar en catálogo'}
                     </button>
                   </div>
                   {editingLocationBusinessId === business.id && (
                     <div className="grid w-full basis-full gap-3 rounded-xl bg-orange-50 p-4">
-                      <label className="text-sm font-semibold">
-                        Dirección exacta
-                        <input
-                          value={locationDraft}
-                          onChange={event => setLocationDraft(event.target.value)}
-                          maxLength={180}
-                          className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
-                          placeholder="Calle, número, barrio y localidad"
-                        />
-                      </label>
+                      <label className="text-sm font-semibold">Nombre del emprendimiento<input className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal" value={businessNameDraft} maxLength={120} onChange={e=>setBusinessNameDraft(e.target.value)} required/></label>
+                      <LocationFields data={{location:locationDraft,...coordinateDraft}} onChange={patch=>{if(patch.location!==undefined)setLocationDraft(patch.location);setCoordinateDraft(d=>({...d,...(patch.latitude!==undefined?{latitude:patch.latitude}:{}),...(patch.longitude!==undefined?{longitude:patch.longitude}:{})}));}}/>
                       <label className="text-sm font-semibold">
                         Referencia para llegar (opcional)
                         <textarea
@@ -1133,7 +1011,7 @@ export default function Business() {
                         disabled={savingLocationBusinessId !== null}
                         className="w-fit rounded-xl bg-[#8B3F14] px-4 py-2 font-bold text-white disabled:opacity-60"
                       >
-                        {savingLocationBusinessId === business.id ? 'Guardando…' : 'Guardar ubicación'}
+                        {savingLocationBusinessId === business.id ? 'Guardando…' : 'Guardar datos del comercio'}
                       </button>
                     </div>
                   )}
@@ -1144,216 +1022,9 @@ export default function Business() {
           {locationSaveNotice && <p role="status" className="mt-3 text-sm font-semibold text-green-800">{locationSaveNotice}</p>}
           {phoneVisibilityError && <p role="alert" className="mt-3 text-sm font-semibold text-red-700">{phoneVisibilityError}</p>}
 
-          <form onSubmit={registerBusiness} className="mt-5 grid gap-3 border-t border-orange-100 pt-5">
-            <h3 className="font-bold">Registrar un emprendimiento</h3>
-            {businessFormError && <p className="rounded-xl bg-red-50 p-4 text-sm font-semibold text-red-800" role="alert">{businessFormError}</p>}
-            <label className="text-sm font-semibold">
-              Nombre
-              <input
-                value={businessName}
-                onChange={event => setBusinessName(event.target.value)}
-                maxLength={120}
-                required
-                className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
-                placeholder="Nombre de tu emprendimiento"
-              />
-            </label>
-            <label className="text-sm font-semibold">
-              Descripción (opcional)
-              <textarea
-                value={businessDescription}
-                onChange={event => setBusinessDescription(event.target.value)}
-                maxLength={2000}
-                rows={3}
-                className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
-                placeholder="Contá brevemente qué ofrecés"
-              />
-            </label>
-            <label className="text-sm font-semibold">
-              Dirección del punto de venta
-              <input
-                value={businessLocation}
-                onChange={event => setBusinessLocation(event.target.value)}
-                maxLength={180}
-                required
-                className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
-                placeholder="Calle, número, barrio y localidad"
-              />
-            </label>
-            <label className="text-sm font-semibold">
-              Referencia para llegar (opcional)
-              <textarea
-                value={businessDirections}
-                onChange={event => setBusinessDirections(event.target.value)}
-                maxLength={300}
-                rows={2}
-                className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
-                placeholder="Indicaciones breves para encontrar el local"
-              />
-            </label>
-            <label className="text-sm font-semibold">
-              WhatsApp para recibir pedidos
-              <input
-                type="tel"
-                value={businessPhone}
-                onChange={event => setBusinessPhone(event.target.value)}
-                maxLength={16}
-                required
-                className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal"
-                placeholder="+5492611234567"
-              />
-            </label>
-            <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={businessPhonePublic}
-                onChange={event => setBusinessPhonePublic(event.target.checked)}
-              />
-              <span>Autorizo que este WhatsApp se muestre en el catálogo público para recibir consultas y pedidos. Está activado por defecto.</span>
-            </label>
-            <div className="rounded-xl border border-orange-100 p-4">
-              <p className="text-sm">Para ubicar tu emprendimiento en MORFI, permití el acceso a tu ubicación GPS.</p>
-              <button
-                type="button"
-                onClick={useBusinessLocation}
-                className="mt-3 rounded-xl border border-[#E8C9AA] px-4 py-2 font-bold"
-              >
-                USAR MI UBICACIÓN
-              </button>
-              {businessLocationNotice && <p className="mt-2 text-sm" role="status">{businessLocationNotice}</p>}
-              {businessLatitude !== null && businessLongitude !== null && (
-                <>
-                  <p className="mt-1 text-xs text-gray-500">Ubicación GPS lista para guardar.</p>
-                  <BusinessLocationMap latitude={businessLatitude} longitude={businessLongitude} />
-                </>
-              )}
-            </div>
-            <div>
-              <input
-                ref={businessLogoInput}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="sr-only"
-                onChange={event => {
-                  setBusinessLogo(event.target.files?.[0] ?? null);
-                  event.target.value = '';
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => businessLogoInput.current?.click()}
-                className="rounded-xl border border-[#E8C9AA] px-4 py-3 font-bold"
-              >
-                SUBIR LOGO
-              </button>
-              {businessLogo && <p className="mt-2 text-sm">{businessLogo.name}</p>}
-              {businessLogoPreview && (
-                <img
-                  src={businessLogoPreview}
-                  alt="Vista previa del logo del emprendimiento"
-                  className="mt-3 h-24 w-24 rounded-full border bg-white object-contain p-1"
-                />
-              )}
-            </div>
-            <fieldset className="rounded-xl border border-orange-100 p-4">
-              <legend className="px-1 text-sm font-bold">Medios de pago</legend>
-              <label className="mt-2 flex items-center gap-2 text-sm font-semibold">
-                <input type="checkbox" checked={acceptsCash} onChange={event => setAcceptsCash(event.target.checked)} />
-                Acepto efectivo
-              </label>
-              <label className="mt-2 flex items-center gap-2 text-sm font-semibold">
-                <input type="checkbox" checked={acceptsTransfer} onChange={event => setAcceptsTransfer(event.target.checked)} />
-                Acepto transferencias
-              </label>
-              {acceptsTransfer && <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <label className="text-sm font-semibold">
-                    Banco o billetera
-                    <select value={bankName} onChange={event => setBankName(event.target.value)} required className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal">
-                      <option value="">Elegí una opción</option>
-                      {argentinePaymentProviders.map(provider => <option key={provider} value={provider}>{provider}</option>)}
-                      <option value="Otro">Otro</option>
-                    </select>
-                  </label>
-                  {bankName === 'Otro' && (
-                    <label className="text-sm font-semibold">
-                      Escribí el nombre
-                      <input value={otherBankName} onChange={event => setOtherBankName(event.target.value)} maxLength={120} required className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal" />
-                    </label>
-                  )}
-                  <label className="text-sm font-semibold">
-                    Alias
-                    <input value={transferAlias} onChange={event => setTransferAlias(event.target.value)} maxLength={120} required className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal" />
-                  </label>
-                  <label className="text-sm font-semibold">
-                    Titular de la cuenta
-                    <input value={transferHolder} onChange={event => setTransferHolder(event.target.value)} maxLength={120} required className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal" />
-                  </label>
-                  <label className="text-sm font-semibold">
-                    CUIT (11 números)
-                    <input inputMode="numeric" value={bankCuit} onChange={event => setBankCuit(event.target.value)} maxLength={13} required className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal" />
-                  </label>
-              </div>}
-            </fieldset>
-            <div>
-              <button
-                type="submit"
-                disabled={creatingBusiness || businessesLoading}
-                className="rounded-xl bg-[#8B3F14] px-5 py-3 font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {creatingBusiness ? 'Registrando…' : 'Registrar emprendimiento'}
-              </button>
-            </div>
-          </form>
-        </section>
 
-        <section className="mb-8 rounded-2xl border border-green-100 bg-white p-6 shadow-sm">
-          <label htmlFor="selected-business" className="block text-sm font-bold">
-            Emprendimiento para gestionar productos
-            <select
-              id="selected-business"
-              value={selectedBusinessId}
-              onChange={event => {
-                setSelectedBusinessId(event.target.value);
-                setEditingProductId(null);
-                setProductPhoto('');
-                setProductPhotoFile(null);
-                setStockQuantity('1');
-                setProductsNotice('');
-                setProductsError('');
-              }}
-              disabled={businessesLoading || managedBusinesses.length === 0 || productsLoading || savingProduct || productActionId !== null}
-              className="mt-2 w-full rounded-xl border border-gray-300 bg-white p-3 font-normal disabled:bg-gray-100"
-            >
-              <option value="">
-                {businessesLoading ? 'Cargando emprendimientos…' : 'Seleccioná un emprendimiento'}
-              </option>
-              {managedBusinesses.map(business => (
-                <option key={business.id} value={business.id}>{business.name}</option>
-              ))}
-            </select>
-          </label>
-          <p className="mt-2 text-xs text-gray-600">
-            Cargá el stock disponible al crear o editar el producto. Los pedidos reservan esas unidades automáticamente.
-          </p>
-          {selectedBusinessId && <BusinessSettings key={selectedBusinessId} businessId={selectedBusinessId} />}
-        </section>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100">
-            <p className="text-gray-500 font-semibold">Productos cargados</p>
-            <p className="text-4xl font-black mt-3">{products.length}</p>
-          </div>
-
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100">
-            <p className="text-gray-500 font-semibold">Pedidos en proceso</p>
-            <p className="text-4xl font-black mt-3">{pending}</p>
-          </div>
-
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-green-100">
-            <p className="text-gray-500 font-semibold">Ventas entregadas (demo)</p>
-            <p className="text-3xl font-black mt-3">{money(sales)}</p>
-          </div>
-        </div>
+          {selectedBusinessId && <><details className="mt-4"><summary className="cursor-pointer py-3 font-bold">Datos de cobro y entrega</summary><BusinessSettings key={selectedBusinessId} businessId={selectedBusinessId} /></details><details className="mt-4"><summary className="cursor-pointer py-3 font-bold">Horarios</summary><BusinessHours key={selectedBusinessId} businessId={selectedBusinessId}/></details><details className="mt-4"><summary className="cursor-pointer py-3 font-bold">Notificaciones</summary><OrderNotificationSettings userId={userId??''}/></details>{managedBusinesses.find(b=>b.id===selectedBusinessId)?.role==='owner'&&<Link className="mt-4 inline-flex min-h-12 items-center rounded-xl border px-4 font-bold" to={'/business/branches/new?parent='+selectedBusinessId}>Agregar sucursal</Link>}</>}
+        </details>
 
         <div className="flex flex-wrap gap-3 mb-6">
           <button
@@ -1377,7 +1048,7 @@ export default function Business() {
                 : 'bg-white border border-green-200'
             }`}
           >
-            Pedidos recibidos
+            Pedidos
           </button>
           <button
             type="button"
@@ -1388,7 +1059,7 @@ export default function Business() {
                 : 'bg-white border border-green-200'
             }`}
           >
-            Costos y preparación
+            Costo y preparación
           </button>
           <button
             type="button"
@@ -1426,26 +1097,14 @@ export default function Business() {
               onSubmit={event => void addProduct(event)}
               className="bg-white rounded-2xl p-6 shadow-sm border border-green-100"
             >
-              <h2 className="text-xl font-black mb-2">¿Qué vas a vender?</h2>
+              <h2 className="text-xl font-black mb-2">¿Qué vendés?</h2>
               <p className="mb-5 text-sm text-gray-600">Completá los datos del producto y guardalo en el emprendimiento seleccionado.</p>
               {editingProductId && (
                 <p className="mb-4 flex flex-wrap items-center gap-3 rounded-xl bg-orange-50 p-3 text-sm font-semibold">
                   Editando producto
                   <button
                     type="button"
-                    onClick={() => {
-                      setEditingProductId(null);
-                      setName('');
-                      setDescription('');
-                      setPrice('');
-                      setProductPhoto('');
-                      setProductPhotoFile(null);
-                      setStockQuantity('1');
-                      setIsAvailable(true);
-                      setAcceptsDelivery(false);
-                      setProductPaymentMethods(['cash', 'transfer']);
-                      setCashDiscountPercent('');
-                    }}
+                    onClick={resetProductForm}
                     className="underline"
                   >
                     Cancelar edición
@@ -1453,12 +1112,50 @@ export default function Business() {
                 </p>
               )}
 
-              <label className="mb-4 block text-sm font-semibold">
-                Unidades disponibles para vender
-                <input type="number" min="0" max="2147483647" step="1" required disabled={Boolean(recipeLinkedProduct)} value={stockQuantity} onChange={event => setStockQuantity(event.target.value)} className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal" />
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <label className="block text-sm font-semibold">Nombre del producto
+                <input
+                  value={name}
+                  onChange={event => setName(event.target.value)}
+                  maxLength={160}
+                  aria-label="Nombre del producto"
+                  placeholder="Nombre del producto (ej.: empanadas de carne)"
+                  className="min-w-0 w-full border border-gray-300 rounded-xl p-3"
+                  required
+                />
+                </label>
+
+                <label className="block text-sm font-semibold">Descripción breve (opcional)
+                <input
+                  value={description}
+                  onChange={event => setDescription(event.target.value)}
+                  aria-label="Descripción breve"
+                  placeholder="Descripción breve de tu producto"
+                  maxLength={1000}
+                  className="min-w-0 w-full border border-gray-300 rounded-xl p-3"
+                />
+                </label>
+
+                <label className="block text-sm font-semibold">Precio en pesos
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={price}
+                  onChange={event => setPrice(event.target.value)}
+                  aria-label="Precio en pesos"
+                  placeholder="¿A cuánto lo querés vender?"
+                  className="min-w-0 w-full border border-gray-300 rounded-xl p-3"
+                  required={saleMode === 'direct'}
+                />
+                </label>
+                <details className="mt-4 rounded-xl border border-orange-100 p-3"><summary className="cursor-pointer py-2 text-sm font-bold">Existencias (opcional)</summary>              <label className="mb-4 block text-sm font-semibold">
+                Stock de referencia
+                <input type="number" min="0" max="2147483647" step="1" disabled={Boolean(recipeLinkedProduct)} value={stockQuantity} onChange={event => setStockQuantity(event.target.value)} className="mt-1 w-full rounded-xl border border-gray-300 p-3 font-normal" />
                 {recipeLinkedProduct && <span className="mt-1 block text-xs font-normal">Este producto usa el stock de su receta. Registrá la producción para sumar unidades.</span>}
               </label>
-              {!editingProductId && <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+<p className="text-sm text-gray-600">Podés vender sin cargar existencias. Este dato es una referencia para tu organización.</p></details>
+              <details className="mt-4 rounded-xl border border-orange-100 p-3"><summary className="cursor-pointer py-2 text-sm font-bold">Calcular costos (opcional)</summary>              {!editingProductId && <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
                 <label className="text-sm font-semibold">
                   Plantilla de ingredientes
                   <select
@@ -1476,7 +1173,7 @@ export default function Business() {
                 </label>
                 {productType === 'Otro' && (
                   <label className="text-sm font-semibold">
-                    ¿Qué vas a vender?
+                    ¿Qué vendés?
                     <input
                       value={customProductType}
                       onChange={event => setCustomProductType(event.target.value)}
@@ -1501,44 +1198,8 @@ export default function Business() {
                   </div>
                 </fieldset>
               </div>}
-              {!editingProductId && (
-                <p className="mb-4 text-xs text-gray-500">
-                  La tabla actual de productos no tiene columna de categoría; esta plantilla solo propone ingredientes para el cálculo local de costos.
-                </p>
-              )}
-
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                <input
-                  value={name}
-                  onChange={event => setName(event.target.value)}
-                  maxLength={160}
-                  aria-label="Nombre del producto"
-                  placeholder="Nombre del producto (ej.: empanadas de carne)"
-                  className="border border-gray-300 rounded-xl p-3"
-                  required
-                />
-
-                <input
-                  value={description}
-                  onChange={event => setDescription(event.target.value)}
-                  aria-label="Descripción breve"
-                  placeholder="Descripción breve de tu producto"
-                  maxLength={1000}
-                  className="border border-gray-300 rounded-xl p-3"
-                />
-
-                <input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={price}
-                  onChange={event => setPrice(event.target.value)}
-                  aria-label="¿A cuánto lo querés vender?"
-                  placeholder="¿A cuánto lo querés vender?"
-                  className="border border-gray-300 rounded-xl p-3"
-                  required={saleMode === 'direct'}
-                />
-                {saleMode === 'cost' && (
+</details>
+              {saleMode === 'cost' && (
                   <button
                     type="button"
                     disabled={suggestedPrice <= 0}
@@ -1560,18 +1221,7 @@ export default function Business() {
                 <fieldset className="rounded-xl border border-orange-100 p-3">
                   <legend className="px-1 text-sm font-semibold">Medios de pago para este producto</legend>
                   <div className="flex flex-wrap gap-4">
-                    <label className="flex items-center gap-2 text-sm font-normal">
-                      <input
-                        type="checkbox"
-                        checked={productPaymentMethods.includes('cash')}
-                        onChange={event => setProductPaymentMethods(current =>
-                          event.target.checked
-                            ? [...current, 'cash']
-                            : current.filter(method => method !== 'cash')
-                        )}
-                      />
-                      Efectivo
-                    </label>
+                    <p className="text-sm">Efectivo siempre disponible.</p>
                     <label className="flex items-center gap-2 text-sm font-normal">
                       <input
                         type="checkbox"
@@ -1589,7 +1239,7 @@ export default function Business() {
               </div>
 
               <div className="mt-4">
-                <p className="text-sm font-semibold">Foto del producto (opcional, hasta 400 KB)</p>
+                <p className="text-sm font-semibold">Foto del producto (opcional, hasta 2 MB)</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <button type="button" onClick={() => cameraInput.current?.click()} className="rounded-lg border px-3 py-2 text-sm font-semibold">Sacar foto</button>
                   <button type="button" onClick={() => photoInput.current?.click()} className="rounded-lg border px-3 py-2 text-sm font-semibold">Elegir de galería</button>
@@ -1843,6 +1493,8 @@ export default function Business() {
               {orders.map(order => (
                 <div
                   key={order.id}
+                  id={'order-'+order.id}
+                  tabIndex={searchParams.get('order')===order.id?-1:undefined}
                   className="border border-gray-200 rounded-xl p-4 flex flex-wrap justify-between gap-4"
                 >
                   <div>
@@ -1973,7 +1625,7 @@ export default function Business() {
         )}
 
         <p className="text-center text-gray-500 text-sm mt-10">
-          MORFI · Los pedidos se consultan y actualizan en Supabase.
+          MORFI · Tus productos y pedidos, en un solo lugar.
         </p>
       </div>
     </main>

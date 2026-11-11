@@ -59,11 +59,7 @@ export default function EmailVerification() {
     }
   }
 
-  const enabledPanels = session?.user.user_metadata.enabled_panels;
-  const destination =
-    Array.isArray(enabledPanels) && enabledPanels.includes('emprendimiento')
-      ? '/business'
-      : '/hungry';
+  const destination = '/account';
 
   return (
     <main className="min-h-screen bg-[#FFF3E5] px-4 py-10 text-[#8B3F14]">

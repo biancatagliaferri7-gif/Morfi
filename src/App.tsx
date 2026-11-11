@@ -1,10 +1,12 @@
-import React from 'react';
+import React, {lazy,Suspense,useState,useEffect} from 'react';
 import { BrowserRouter, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
 import Home from './pages/Home';
 import Hungry from './pages/Hungry';
-import Business from './pages/Business';
+const Business=lazy(()=>import('./pages/Business'));
 import Savings from './pages/Savings';
 import Auth from './pages/Auth';
+import ClientRegister from './pages/ClientRegister';
+const SellerRegister=lazy(()=>import('./pages/SellerRegister'));
 import EmailVerification from './pages/EmailVerification';
 import { AuthProvider, useAuth } from './AuthContext';
 
@@ -63,7 +65,7 @@ export const MorfiLogoSVG: React.FC<{ size?: number }> = ({ size = 44 }) => (
 /* ─── Desktop Header ─────────────────────────────────────────── */
 const DesktopHeader: React.FC = () => {
   const location = useLocation();
-  const { session, profile, signOut } = useAuth();
+  const { session, profile, signOut, isSeller } = useAuth();
   const closeSession = () => {
     void signOut().catch(() => window.alert('No se pudo cerrar la sesión. Intentá nuevamente.'));
   };
@@ -71,7 +73,7 @@ const DesktopHeader: React.FC = () => {
   const navLinks = [
     { to: '/', label: 'Inicio', icon: <IconHome className="w-5 h-5 mx-auto mb-0.5"/> },
     { to: '/hungry', label: 'Tengo hambre', icon: <IconFork className="w-5 h-5 mx-auto mb-0.5"/> },
-    { to: '/business', label: 'Mi emprendimiento', icon: <IconStore className="w-5 h-5 mx-auto mb-0.5"/> },
+    ...(session && isSeller ? [{ to: '/business', label: 'Mi emprendimiento', icon: <IconStore className="w-5 h-5 mx-auto mb-0.5"/> }] : []),
   ];
 
   return (
@@ -124,12 +126,13 @@ const DesktopHeader: React.FC = () => {
 
 /* ─── Mobile Header ──────────────────────────────────────────── */
 const MobileHeader: React.FC = () => {
-  const { session, signOut } = useAuth();
+  const { session, signOut, isSeller } = useAuth();
+  const [menuOpen,setMenuOpen]=useState(false);
   const closeSession = () => {
     void signOut().catch(() => window.alert('No se pudo cerrar la sesión. Intentá nuevamente.'));
   };
   return <header className="flex md:hidden items-center justify-between px-4 py-2.5 bg-white sticky top-0 z-50 border-b border-[#F2DDCA]">
-    <button className="text-[#8B3F14] p-1" aria-label="Menú">
+    <button className="text-[#8B3F14] p-3" aria-label="Menú" aria-expanded={menuOpen} aria-controls="mobile-menu" onClick={()=>setMenuOpen(!menuOpen)}>
       <IconMenu className="w-6 h-6"/>
     </button>
     <Link to="/" className="flex items-center gap-2 no-underline">
@@ -138,17 +141,19 @@ const MobileHeader: React.FC = () => {
     {session
       ? <button onClick={closeSession} className="text-xs font-semibold text-[#8B3F14]">Salir</button>
       : <Link to="/login" className="text-[#8B3F14] p-1" aria-label="Ingresar"><IconUser className="w-6 h-6"/></Link>}
+    {menuOpen&&<nav id="mobile-menu" aria-label="Menú principal" className="absolute left-0 right-0 top-full border-b border-orange-100 bg-white p-4 shadow-sm" onClick={()=>setMenuOpen(false)}><Link className="block min-h-12 py-3 font-semibold" to="/">Inicio</Link><Link className="block min-h-12 py-3 font-semibold" to="/hungry">Tengo hambre</Link>{session&&isSeller&&<Link className="block min-h-12 py-3 font-semibold" to="/business">Mi emprendimiento</Link>}{!session&&<Link className="block min-h-12 py-3 font-semibold" to="/register">Registrarse</Link>}</nav>}
   </header>;
 };
 
 /* ─── Mobile Bottom Nav ──────────────────────────────────────── */
 const MobileBottomNav: React.FC = () => {
   const location = useLocation();
+  const {session,isSeller}=useAuth();
 
   const tabs = [
     { to: '/', label: 'Inicio', icon: (c: string) => <IconHome className={c}/> },
     { to: '/hungry', label: 'Tengo hambre', icon: (c: string) => <IconFork className={c}/> },
-    { to: '/business', label: 'Emprendimiento', icon: (c: string) => <IconStore className={c}/> },
+    ...(session && isSeller ? [{ to: '/business', label: 'Mi emprendimiento', icon: (c: string) => <IconStore className={c}/> }] : []),
   ];
 
   return (
@@ -173,34 +178,47 @@ const MobileBottomNav: React.FC = () => {
 };
 
 /* ─── App ────────────────────────────────────────────────────── */
-const PrivateBusiness: React.FC = () => {
-  const { loading, session, profile } = useAuth();
-  if (loading) return <p className="p-8 text-center text-[#8B3F14]">Verificando tu sesión…</p>;
-  if (!session) return <Navigate to="/login?next=%2Fbusiness" replace />;
-  if (!profile?.enabled_panels?.includes('emprendimiento')) {
-    return <p role="alert" className="p-8 text-center text-[#8B3F14]">Tu cuenta no tiene habilitado el panel Mi emprendimiento. Registrate con ese panel o contactá al equipo de MORFI.</p>;
-  }
-  return <Business key={profile.id} />;
+const SellerGate: React.FC<{children:React.ReactNode}> = ({children}) => {
+ const {loading,session,isSeller}=useAuth();
+ if(loading)return <p className="p-8" role="status">Verificando tu sesión…</p>;
+ if(!session)return <Navigate to={'/login?next='+encodeURIComponent(location.pathname+location.search)} replace/>;
+ if(!isSeller)return <Navigate to="/register/emprendedor" replace/>;
+ return <>{children}</>;
+};
+const AccountRedirect:React.FC=()=>{
+ const {loading,isSeller,sellerSetupPending}=useAuth();
+ if(loading)return <p className="p-8">Ingresando…</p>;
+ return <Navigate to={isSeller?'/business':sellerSetupPending?'/register/emprendedor':'/hungry'} replace/>;
+};
+
+const PageScroll:React.FC=()=>{
+  const route=useLocation();
+  useEffect(()=>{window.scrollTo(0,0);},[route.pathname]);
+  return null;
 };
 
 const App: React.FC = () => (
   <BrowserRouter>
     <AuthProvider>
+      <PageScroll/>
       <div className="flex flex-col min-h-screen bg-white">
         <MobileHeader />
         <DesktopHeader />
-        <main className="flex-1 pb-16 md:pb-0">
-          <Routes>
+        <div className="flex-1 pb-16 md:pb-0">
+          <Suspense fallback={<p role="status" className="p-8">Cargando…</p>}><Routes>
             <Route path="/" element={<Home />} />
             <Route path="/hungry" element={<Hungry />} />
-            <Route path="/business" element={<PrivateBusiness />} />
+            <Route path="/business" element={<SellerGate><Business /></SellerGate>} />
             <Route path="/savings" element={<Savings />} />
             <Route path="/login" element={<Auth initialMode="login" />} />
-            <Route path="/register" element={<Auth initialMode="register" />} />
+            <Route path="/register" element={<ClientRegister />} />
+            <Route path="/register/emprendedor" element={<SellerRegister />} />
+            <Route path="/business/branches/new" element={<SellerGate><SellerRegister branch /></SellerGate>} />
+            <Route path="/account" element={<AccountRedirect />} />
             <Route path="/auth/callback" element={<EmailVerification />} />
             <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </main>
+          </Routes></Suspense>
+        </div>
         <MobileBottomNav />
       </div>
     </AuthProvider>
